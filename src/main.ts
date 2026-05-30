@@ -34,6 +34,14 @@ type BatwingArraySettings = {
   subdivisions: number
 }
 
+type BatwingDepthGradientSettings = {
+  baseDepth: number
+  topThin: number
+  supportThicken: number
+  openingThin: number
+  effectStrength: number
+}
+
 type BatwingSymmetrySettings = {
   rotationalCopies: number
   screwHeightPerCopy: number
@@ -48,6 +56,17 @@ type ArraySliderBinding = {
   min: number
   max: number
   integer: boolean
+  slider: HTMLInputElement
+  valueInput: HTMLInputElement
+}
+
+type DepthGradientControlKey = keyof BatwingDepthGradientSettings
+
+type DepthGradientSliderBinding = {
+  key: DepthGradientControlKey
+  fallback: number
+  min: number
+  max: number
   slider: HTMLInputElement
   valueInput: HTMLInputElement
 }
@@ -124,6 +143,7 @@ type BatwingAppState = {
   batwingFamily: BatwingFamilyType
   settings: BatwingSettings
   arraySettings: BatwingArraySettings
+  depthGradientSettings: BatwingDepthGradientSettings
   symmetrySettings: BatwingSymmetrySettings
   latticeSettings: BatwingLatticeSettings
   latticeInfluenceSettings: BatwingLatticeInfluenceSettings
@@ -245,6 +265,7 @@ document.title = 'Minimal Surface Atlas'
 const EXPORT_BASE_NAME = 'Minimal_Surface_Atlas'
 const MAX_HISTORY_STATES = 100
 const MAX_ARRAY_COUNT = 20
+const MAX_DEPTH_GRADIENT_FACTOR = 2
 const MAX_THICKNESS = 1
 const MAX_SUBDIVISIONS = 3
 const MAX_LATTICE_DIVISIONS = 20
@@ -284,6 +305,13 @@ const DEFAULT_ARRAY_SETTINGS: BatwingArraySettings = {
   heightCount: 1,
   thickness: 0,
   subdivisions: 0,
+}
+const DEFAULT_DEPTH_GRADIENT_SETTINGS: BatwingDepthGradientSettings = {
+  baseDepth: 0,
+  topThin: 0,
+  supportThicken: 0,
+  openingThin: 0,
+  effectStrength: 1,
 }
 const DEFAULT_SYMMETRY_SETTINGS: BatwingSymmetrySettings = {
   rotationalCopies: 1,
@@ -469,6 +497,48 @@ app.innerHTML = `
                 <input id="height-count-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="20" step="1" value="1" />
               </div>
               <input id="heightCountSlider" type="range" min="1" max="20" value="1" step="1" />
+            </label>
+          </div>
+        </section>
+        <section class="panel-section">
+          <button class="panel-section-header" type="button" aria-expanded="true">
+            <span class="panel-section-label">Depth Gradient</span>
+          </button>
+          <div class="panel-section-content panel-controls-stack">
+            <label class="control" for="baseDepthSlider">
+              <div class="control-row">
+                <span>Deeper At Base</span>
+                <input id="base-depth-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="2" step="0.01" value="0.00" />
+              </div>
+              <input id="baseDepthSlider" type="range" min="0" max="2" value="0" step="0.01" />
+            </label>
+            <label class="control" for="topThinSlider">
+              <div class="control-row">
+                <span>Thinner At Top</span>
+                <input id="top-thin-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="2" step="0.01" value="0.00" />
+              </div>
+              <input id="topThinSlider" type="range" min="0" max="2" value="0" step="0.01" />
+            </label>
+            <label class="control" for="supportThickenSlider">
+              <div class="control-row">
+                <span>Thicker Near Supports</span>
+                <input id="support-thicken-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="2" step="0.01" value="0.00" />
+              </div>
+              <input id="supportThickenSlider" type="range" min="0" max="2" value="0" step="0.01" />
+            </label>
+            <label class="control" for="openingThinSlider">
+              <div class="control-row">
+                <span>Thinner Near Openings</span>
+                <input id="opening-thin-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="2" step="0.01" value="0.00" />
+              </div>
+              <input id="openingThinSlider" type="range" min="0" max="2" value="0" step="0.01" />
+            </label>
+            <label class="control" for="depthEffectStrengthSlider">
+              <div class="control-row">
+                <span>Gradient Strength</span>
+                <input id="depth-effect-strength-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="1" step="0.01" value="1.00" />
+              </div>
+              <input id="depthEffectStrengthSlider" type="range" min="0" max="1" value="1" step="0.01" />
             </label>
           </div>
         </section>
@@ -802,6 +872,49 @@ const arraySliderBindings: ArraySliderBinding[] = [
   },
 ]
 
+const depthGradientSliderBindings: DepthGradientSliderBinding[] = [
+  {
+    key: 'baseDepth',
+    fallback: DEFAULT_DEPTH_GRADIENT_SETTINGS.baseDepth,
+    min: 0,
+    max: MAX_DEPTH_GRADIENT_FACTOR,
+    slider: requireElement<HTMLInputElement>('#baseDepthSlider'),
+    valueInput: requireElement<HTMLInputElement>('#base-depth-value'),
+  },
+  {
+    key: 'topThin',
+    fallback: DEFAULT_DEPTH_GRADIENT_SETTINGS.topThin,
+    min: 0,
+    max: MAX_DEPTH_GRADIENT_FACTOR,
+    slider: requireElement<HTMLInputElement>('#topThinSlider'),
+    valueInput: requireElement<HTMLInputElement>('#top-thin-value'),
+  },
+  {
+    key: 'supportThicken',
+    fallback: DEFAULT_DEPTH_GRADIENT_SETTINGS.supportThicken,
+    min: 0,
+    max: MAX_DEPTH_GRADIENT_FACTOR,
+    slider: requireElement<HTMLInputElement>('#supportThickenSlider'),
+    valueInput: requireElement<HTMLInputElement>('#support-thicken-value'),
+  },
+  {
+    key: 'openingThin',
+    fallback: DEFAULT_DEPTH_GRADIENT_SETTINGS.openingThin,
+    min: 0,
+    max: MAX_DEPTH_GRADIENT_FACTOR,
+    slider: requireElement<HTMLInputElement>('#openingThinSlider'),
+    valueInput: requireElement<HTMLInputElement>('#opening-thin-value'),
+  },
+  {
+    key: 'effectStrength',
+    fallback: DEFAULT_DEPTH_GRADIENT_SETTINGS.effectStrength,
+    min: 0,
+    max: 1,
+    slider: requireElement<HTMLInputElement>('#depthEffectStrengthSlider'),
+    valueInput: requireElement<HTMLInputElement>('#depth-effect-strength-value'),
+  },
+]
+
 const symmetrySliderBindings: SymmetrySliderBinding[] = [
   {
     key: 'rotationalCopies',
@@ -1070,6 +1183,7 @@ const initialGeometrySet = buildBatwingGeometrySet(
   DEFAULT_BATWING_FAMILY,
   DEFAULT_SETTINGS,
   DEFAULT_ARRAY_SETTINGS,
+  DEFAULT_DEPTH_GRADIENT_SETTINGS,
   DEFAULT_SYMMETRY_SETTINGS,
 )
 const batwingMesh = new THREE.Mesh(initialGeometrySet.meshGeometry, batwingMaterial)
@@ -1182,6 +1296,12 @@ function normalizeArraySliderValue(binding: ArraySliderBinding, value: number): 
   const snappedValue = snapValueToSlider(clampedValue, binding.slider)
   const nextValue = binding.integer ? Math.round(snappedValue) : snappedValue
   return clampNumber(nextValue, binding.min, binding.max)
+}
+
+function normalizeDepthGradientValue(binding: DepthGradientSliderBinding, value: number): number {
+  const safeValue = Number.isFinite(value) ? value : binding.fallback
+  const clampedValue = clampNumber(safeValue, binding.min, binding.max)
+  return snapValueToSlider(clampedValue, binding.slider)
 }
 
 function normalizeLatticeSliderValue(binding: LatticeSliderBinding, value: number): number {
@@ -1307,6 +1427,16 @@ function getCurrentArraySettings(): BatwingArraySettings {
   )
 }
 
+function getCurrentDepthGradientSettings(): BatwingDepthGradientSettings {
+  return depthGradientSliderBindings.reduce<BatwingDepthGradientSettings>(
+    (settings, binding) => {
+      settings[binding.key] = normalizeDepthGradientValue(binding, readSliderNumber(binding.slider, binding.fallback))
+      return settings
+    },
+    { ...DEFAULT_DEPTH_GRADIENT_SETTINGS },
+  )
+}
+
 function getCurrentSymmetrySettings(): BatwingSymmetrySettings {
   return symmetrySliderBindings.reduce<BatwingSymmetrySettings>(
     (settings, binding) => {
@@ -1363,6 +1493,16 @@ function cloneArraySettings(settings: BatwingArraySettings): BatwingArraySetting
     heightCount: settings.heightCount,
     thickness: settings.thickness,
     subdivisions: settings.subdivisions,
+  }
+}
+
+function cloneDepthGradientSettings(settings: BatwingDepthGradientSettings): BatwingDepthGradientSettings {
+  return {
+    baseDepth: settings.baseDepth,
+    topThin: settings.topThin,
+    supportThicken: settings.supportThicken,
+    openingThin: settings.openingThin,
+    effectStrength: settings.effectStrength,
   }
 }
 
@@ -1433,6 +1573,7 @@ function cloneAppState(state: BatwingAppState): BatwingAppState {
     batwingFamily: state.batwingFamily,
     settings: cloneSettings(state.settings),
     arraySettings: cloneArraySettings(state.arraySettings),
+    depthGradientSettings: cloneDepthGradientSettings(state.depthGradientSettings),
     symmetrySettings: cloneSymmetrySettings(state.symmetrySettings),
     latticeSettings: cloneLatticeSettings(state.latticeSettings),
     latticeInfluenceSettings: cloneLatticeInfluenceSettings(state.latticeInfluenceSettings),
@@ -1454,6 +1595,7 @@ function captureAppState(): BatwingAppState {
     batwingFamily: getCurrentBatwingFamily(),
     settings: getCurrentSettings(),
     arraySettings: getCurrentArraySettings(),
+    depthGradientSettings: getCurrentDepthGradientSettings(),
     symmetrySettings: getCurrentSymmetrySettings(),
     latticeSettings: getCurrentLatticeSettings(),
     latticeInfluenceSettings: getCurrentLatticeInfluenceSettings(),
@@ -1482,6 +1624,11 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.arraySettings.heightCount === b.arraySettings.heightCount &&
     a.arraySettings.thickness === b.arraySettings.thickness &&
     a.arraySettings.subdivisions === b.arraySettings.subdivisions &&
+    a.depthGradientSettings.baseDepth === b.depthGradientSettings.baseDepth &&
+    a.depthGradientSettings.topThin === b.depthGradientSettings.topThin &&
+    a.depthGradientSettings.supportThicken === b.depthGradientSettings.supportThicken &&
+    a.depthGradientSettings.openingThin === b.depthGradientSettings.openingThin &&
+    a.depthGradientSettings.effectStrength === b.depthGradientSettings.effectStrength &&
     a.symmetrySettings.rotationalCopies === b.symmetrySettings.rotationalCopies &&
     a.symmetrySettings.screwHeightPerCopy === b.symmetrySettings.screwHeightPerCopy &&
     a.symmetrySettings.glideOffsetX === b.symmetrySettings.glideOffsetX &&
@@ -1552,6 +1699,7 @@ function applyAppState(state: BatwingAppState): void {
   applyBatwingFamily(state.batwingFamily)
   applySettings(state.settings)
   applyArraySettings(state.arraySettings)
+  applyDepthGradientSettings(state.depthGradientSettings)
   applySymmetrySettings(state.symmetrySettings)
   applyLatticeSettings(state.latticeSettings)
   applyLatticeInfluenceSettings(state.latticeInfluenceSettings)
@@ -1647,6 +1795,17 @@ function applyArraySettings(settings: BatwingArraySettings): void {
   rebuildBatwing()
 }
 
+function applyDepthGradientSettings(settings: BatwingDepthGradientSettings): void {
+  for (const binding of depthGradientSliderBindings) {
+    const nextValue = normalizeDepthGradientValue(binding, settings[binding.key])
+    binding.slider.value = `${nextValue}`
+    binding.valueInput.value = formatSliderValue(nextValue)
+    updateRangeProgress(binding.slider)
+  }
+
+  rebuildBatwing()
+}
+
 function applySymmetrySettings(settings: BatwingSymmetrySettings): void {
   for (const binding of symmetrySliderBindings) {
     const nextValue = normalizeSymmetrySliderValue(binding, settings[binding.key])
@@ -1735,6 +1894,15 @@ function commitArrayValueInput(binding: ArraySliderBinding): void {
   const nextValue = normalizeArraySliderValue(binding, parsedValue)
   binding.slider.value = `${nextValue}`
   binding.valueInput.value = formatArraySliderValue(binding, nextValue)
+  updateRangeProgress(binding.slider)
+  rebuildBatwing()
+}
+
+function commitDepthGradientValueInput(binding: DepthGradientSliderBinding): void {
+  const parsedValue = Number.parseFloat(binding.valueInput.value)
+  const nextValue = normalizeDepthGradientValue(binding, parsedValue)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatSliderValue(nextValue)
   updateRangeProgress(binding.slider)
   rebuildBatwing()
 }
@@ -1862,6 +2030,37 @@ function bindArraySlider(binding: ArraySliderBinding): void {
       clearControlHistoryEdit()
       binding.valueInput.blur()
     }
+  })
+}
+
+function bindDepthGradientSlider(binding: DepthGradientSliderBinding): void {
+  const syncFromSlider = (): void => {
+    beginControlHistoryEdit()
+    const value = normalizeDepthGradientValue(binding, readSliderNumber(binding.slider, binding.fallback))
+    binding.slider.value = `${value}`
+    binding.valueInput.value = formatSliderValue(value)
+    updateRangeProgress(binding.slider)
+    rebuildBatwing()
+  }
+
+  binding.slider.addEventListener('pointerdown', beginControlHistoryEdit)
+  binding.slider.addEventListener('pointerup', finishControlHistoryEdit)
+  binding.slider.addEventListener('pointercancel', finishControlHistoryEdit)
+  binding.slider.addEventListener('keydown', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      beginControlHistoryEdit()
+    }
+  })
+  binding.slider.addEventListener('input', syncFromSlider)
+  binding.slider.addEventListener('change', finishControlHistoryEdit)
+  binding.valueInput.addEventListener('focus', beginControlHistoryEdit)
+  binding.valueInput.addEventListener('change', () => {
+    commitDepthGradientValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('blur', () => {
+    commitDepthGradientValueInput(binding)
+    finishControlHistoryEdit()
   })
 }
 
@@ -2038,12 +2237,14 @@ function rebuildBatwing(): void {
   const batwingFamily = getCurrentBatwingFamily()
   const settings = getCurrentSettings()
   const arraySettings = getCurrentArraySettings()
+  const depthGradientSettings = getCurrentDepthGradientSettings()
   const symmetrySettings = getCurrentSymmetrySettings()
   const sourceQuadMesh = buildSubdividedWeldedArrayQuadMesh(
     geometryType,
     batwingFamily,
     settings,
     arraySettings,
+    depthGradientSettings,
     symmetrySettings,
   )
   currentSourceQuadMesh = cloneQuadMeshData(sourceQuadMesh)
@@ -2184,6 +2385,7 @@ function buildBatwingGeometrySet(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  depthGradientSettings: BatwingDepthGradientSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): BatwingGeometrySet {
   const quadMesh = buildSubdividedWeldedArrayQuadMesh(
@@ -2191,6 +2393,7 @@ function buildBatwingGeometrySet(
     batwingFamily,
     settings,
     arraySettings,
+    depthGradientSettings,
     symmetrySettings,
   )
   currentSourceQuadMesh = cloneQuadMeshData(quadMesh)
@@ -3535,11 +3738,13 @@ function buildSubdividedWeldedArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  depthGradientSettings: BatwingDepthGradientSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   const weldedMesh = buildWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings)
+  const depthAdjustedMesh = applyStructuralDepthGradient(weldedMesh, depthGradientSettings)
   const thickenedMesh = createThickenedQuadMesh(
-    weldedMesh,
+    depthAdjustedMesh,
     arraySettings.thickness,
     buildArrayCenterThicknessNormalMap(arraySettings),
   )
@@ -3588,6 +3793,76 @@ function buildCheckerboardArrayQuadMesh(
     vertices,
     quadFaces,
   }
+}
+
+function applyStructuralDepthGradient(
+  quadMesh: QuadMeshData,
+  settings: BatwingDepthGradientSettings,
+): QuadMeshData {
+  if (
+    settings.baseDepth <= 1e-6 &&
+    settings.topThin <= 1e-6 &&
+    settings.supportThicken <= 1e-6 &&
+    settings.openingThin <= 1e-6
+  ) {
+    return quadMesh
+  }
+
+  const bounds = computeQuadMeshBounds(quadMesh)
+  const size = bounds.getSize(new THREE.Vector3())
+  const min = bounds.min
+  const max = bounds.max
+  const cellWidth = BATWING_BOX_DIMENSIONS.width
+  const cellDepth = BATWING_BOX_DIMENSIONS.depth
+  const cellHeight = BATWING_BOX_DIMENSIONS.height
+  const supportCorners = [
+    new THREE.Vector2(min.x, min.z),
+    new THREE.Vector2(min.x, max.z),
+    new THREE.Vector2(max.x, min.z),
+    new THREE.Vector2(max.x, max.z),
+  ]
+
+  const vertices = quadMesh.vertices.map((vertex) => {
+    const yNorm = Math.abs(size.y) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.y - min.y) / size.y, 0, 1)
+    const baseTerm = (1 - yNorm) * settings.baseDepth
+    const topTerm = yNorm * settings.topThin
+
+    const distanceToSupport = supportCorners.reduce(
+      (nearest, support) => Math.min(nearest, support.distanceTo(new THREE.Vector2(vertex.x, vertex.z))),
+      Number.POSITIVE_INFINITY,
+    )
+    const supportRange = Math.max(cellWidth, cellDepth, 1e-6)
+    const supportProximity = Math.exp(-((distanceToSupport / supportRange) ** 2) * 2.8)
+    const supportTerm = supportProximity * settings.supportThicken
+
+    const openingProximity =
+      periodicCenterWeight(vertex.x, min.x, cellWidth) *
+      periodicCenterWeight(vertex.y, min.y, cellHeight) *
+      periodicCenterWeight(vertex.z, min.z, cellDepth)
+    const openingTerm = openingProximity * settings.openingThin
+
+    const combined = (baseTerm + supportTerm - topTerm - openingTerm) * clampNumber(settings.effectStrength, 0, 1)
+    const depthScale = clampNumber(1 + combined, 0.25, 3.0)
+
+    const scaledX = min.x + (vertex.x - min.x) * depthScale
+    const scaledZ = min.z + (vertex.z - min.z) * depthScale
+    const scaledY = min.y + (vertex.y - min.y) * (0.6 + depthScale * 0.4)
+    return new THREE.Vector3(scaledX, scaledY, scaledZ)
+  })
+
+  return {
+    vertices,
+    quadFaces: quadMesh.quadFaces,
+  }
+}
+
+function periodicCenterWeight(value: number, origin: number, period: number): number {
+  if (period <= 1e-6) {
+    return 0
+  }
+  const phase = ((value - origin) / period) % 1
+  const wrapped = phase < 0 ? phase + 1 : phase
+  return 0.5 - 0.5 * Math.cos(wrapped * Math.PI * 2)
 }
 
 function buildSymmetryTransforms(
@@ -4598,6 +4873,11 @@ for (const binding of sliderBindings) {
 
 for (const binding of arraySliderBindings) {
   bindArraySlider(binding)
+  updateRangeProgress(binding.slider)
+}
+
+for (const binding of depthGradientSliderBindings) {
+  bindDepthGradientSlider(binding)
   updateRangeProgress(binding.slider)
 }
 
