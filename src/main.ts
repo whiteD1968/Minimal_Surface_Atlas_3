@@ -162,9 +162,9 @@ type BatwingAppState = {
 
 type LoadedTargetSurface = {
   name: string
-  points: THREE.Vector3[]
   triangles: Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>
   bounds: THREE.Box3
+  previewMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
 }
 
 type BatwingMaterialStyle = {
@@ -574,7 +574,7 @@ app.innerHTML = `
         </section>
         <section class="panel-section">
           <button class="panel-section-header" type="button" aria-expanded="true">
-            <span class="panel-section-label">Lattice</span>
+            <span class="panel-section-label">Surface Mapping</span>
           </button>
           <div class="panel-section-content panel-controls-stack">
             <label class="control" for="targetSurfaceFileInput">
@@ -586,6 +586,18 @@ app.innerHTML = `
             <div class="control control-grid-2">
               <button id="loadTargetSurfaceButton" class="pill-button" type="button">Load Target</button>
               <button id="clearTargetSurfaceButton" class="pill-button" type="button">Clear Target</button>
+            </div>
+            <div class="control">
+              <button id="snapTargetToBatwingButton" class="pill-button control-button-wide" type="button">Snap Target To Batwing Bounds</button>
+            </div>
+            <div class="control control-grid-2">
+              <button id="mapTargetButton" class="pill-button" type="button">Map Batwing To Target</button>
+              <button id="unmapTargetButton" class="pill-button" type="button">Stop Mapping</button>
+            </div>
+            <div class="control control-grid-2">
+              <button id="targetMoveModeButton" class="pill-button" type="button">Target Move</button>
+              <button id="targetRotateModeButton" class="pill-button" type="button">Target Rotate</button>
+              <button id="targetScaleModeButton" class="pill-button" type="button">Target Scale</button>
             </div>
             <label class="control" for="targetBlendSlider">
               <div class="control-row">
@@ -608,6 +620,13 @@ app.innerHTML = `
               </div>
               <input id="targetScaleSlider" type="range" min="0.05" max="20" value="1" step="0.01" />
             </label>
+          </div>
+        </section>
+        <section class="panel-section">
+          <button class="panel-section-header" type="button" aria-expanded="true">
+            <span class="panel-section-label">Lattice</span>
+          </button>
+          <div class="panel-section-content panel-controls-stack">
             <label class="control" for="lengthDivisionSlider">
               <div class="control-row">
                 <span>Length Division</span>
@@ -812,6 +831,12 @@ const batwingFamilySelect = requireElement<HTMLSelectElement>('#batwingFamilySel
 const targetSurfaceFileInput = requireElement<HTMLInputElement>('#targetSurfaceFileInput')
 const loadTargetSurfaceButton = requireElement<HTMLButtonElement>('#loadTargetSurfaceButton')
 const clearTargetSurfaceButton = requireElement<HTMLButtonElement>('#clearTargetSurfaceButton')
+const snapTargetToBatwingButton = requireElement<HTMLButtonElement>('#snapTargetToBatwingButton')
+const mapTargetButton = requireElement<HTMLButtonElement>('#mapTargetButton')
+const unmapTargetButton = requireElement<HTMLButtonElement>('#unmapTargetButton')
+const targetMoveModeButton = requireElement<HTMLButtonElement>('#targetMoveModeButton')
+const targetRotateModeButton = requireElement<HTMLButtonElement>('#targetRotateModeButton')
+const targetScaleModeButton = requireElement<HTMLButtonElement>('#targetScaleModeButton')
 
 const sliderBindings: SliderBinding[] = [
   {
@@ -1086,6 +1111,7 @@ controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE
 let currentSourceQuadMesh: QuadMeshData | null = null
 let latticeState: LatticeState | null = null
 let loadedTargetSurface: LoadedTargetSurface | null = null
+let targetMappingEnabled = false
 let latticePointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
 let latticeHighlightPointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
 let latticeLineSegments: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null
@@ -1102,6 +1128,19 @@ const latticeMatrixHelper = new THREE.Object3D()
 const latticeTransformAnchor = new THREE.Object3D()
 latticeTransformAnchor.visible = false
 scene.add(latticeTransformAnchor)
+
+const targetTransformControl = new TransformControls(camera, renderer.domElement)
+targetTransformControl.setSize(0.75)
+targetTransformControl.enabled = false
+const targetTransformHelper = targetTransformControl.getHelper()
+targetTransformHelper.visible = false
+targetTransformControl.addEventListener('dragging-changed', (event) => {
+  controls.enabled = !event.value
+  if (!event.value && targetMappingEnabled) {
+    rebuildBatwing()
+  }
+})
+scene.add(targetTransformHelper)
 
 const latticeTransformControlHandles = [
   createLatticeTransformControl('translate', 0.75),
@@ -2991,35 +3030,23 @@ function applyTargetSurfaceMapping(
   quadMesh: QuadMeshData,
   settings: BatwingTargetSurfaceSettings,
 ): QuadMeshData {
-  if (!loadedTargetSurface || loadedTargetSurface.triangles.length === 0) {
+  if (!targetMappingEnabled || !loadedTargetSurface || loadedTargetSurface.triangles.length === 0) {
     return quadMesh
   }
-
-  const sourceBounds = computeQuadMeshBounds(quadMesh)
-  const sourceSize = sourceBounds.getSize(new THREE.Vector3())
-  const sourceCenter = sourceBounds.getCenter(new THREE.Vector3())
-  const targetCenter = loadedTargetSurface.bounds.getCenter(new THREE.Vector3())
+  loadedTargetSurface.previewMesh.updateMatrixWorld(true)
+  const meshMatrix = loadedTargetSurface.previewMesh.matrixWorld.clone()
   const targetScale = Math.max(settings.targetScale, 0.01)
   const blend = clampNumber(settings.blend, 0, 1)
   const offset = settings.offset
-  const scaledTriangles = loadedTargetSurface.triangles.map(([a, b, c]) => [
-    a.clone().sub(targetCenter).multiplyScalar(targetScale),
-    b.clone().sub(targetCenter).multiplyScalar(targetScale),
-    c.clone().sub(targetCenter).multiplyScalar(targetScale),
+
+  const transformedTriangles = loadedTargetSurface.triangles.map(([a, b, c]) => [
+    a.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
+    b.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
+    c.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
   ] as [THREE.Vector3, THREE.Vector3, THREE.Vector3])
 
   const vertices = quadMesh.vertices.map((vertex) => {
-    const normalized = new THREE.Vector3(
-      Math.abs(sourceSize.x) <= SCALE_EPSILON ? 0 : (vertex.x - sourceCenter.x) / Math.max(sourceSize.x / 2, SCALE_EPSILON),
-      Math.abs(sourceSize.y) <= SCALE_EPSILON ? 0 : (vertex.y - sourceCenter.y) / Math.max(sourceSize.y / 2, SCALE_EPSILON),
-      Math.abs(sourceSize.z) <= SCALE_EPSILON ? 0 : (vertex.z - sourceCenter.z) / Math.max(sourceSize.z / 2, SCALE_EPSILON),
-    )
-    const guessPoint = new THREE.Vector3(
-      normalized.x * targetScale * BATWING_BOX_DIMENSIONS.width,
-      normalized.y * targetScale * BATWING_BOX_DIMENSIONS.height,
-      normalized.z * targetScale * BATWING_BOX_DIMENSIONS.depth,
-    )
-    const closest = getClosestPointOnTriangleSet(guessPoint, scaledTriangles)
+    const closest = getClosestPointOnTriangleSet(vertex, transformedTriangles)
     const target = closest.position
     const blended = vertex.clone().lerp(target, blend)
     const normalDir = closest.normal.clone()
@@ -3084,18 +3111,70 @@ async function loadTargetSurfaceFromInput(): Promise<void> {
     return
   }
 
+  geometry.computeVertexNormals()
   geometry.computeBoundingBox()
   const bounds = geometry.boundingBox?.clone() ?? new THREE.Box3()
-  const points = extractGeometryPoints(geometry)
   const triangles = extractGeometryTriangles(geometry)
+  const previewMesh = new THREE.Mesh(
+    geometry.clone(),
+    new THREE.MeshStandardMaterial({
+      color: 0x8fd5ff,
+      roughness: 0.5,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.38,
+      side: THREE.DoubleSide,
+      wireframe: false,
+    }),
+  )
+  previewMesh.renderOrder = 1
+  previewMesh.frustumCulled = false
+  scene.add(previewMesh)
+
+  if (loadedTargetSurface) {
+    scene.remove(loadedTargetSurface.previewMesh)
+    loadedTargetSurface.previewMesh.geometry.dispose()
+    loadedTargetSurface.previewMesh.material.dispose()
+  }
+
   loadedTargetSurface = {
     name: file.name,
-    points,
     triangles,
     bounds,
+    previewMesh,
   }
+  targetTransformControl.attach(previewMesh)
+  targetTransformControl.enabled = true
+  targetTransformHelper.visible = true
+  targetTransformControl.setMode('translate')
+  snapTargetToBatwingBounds()
+  targetMappingEnabled = false
   geometry.dispose()
   rebuildBatwing()
+}
+
+function snapTargetToBatwingBounds(): void {
+  if (!loadedTargetSurface || !currentSourceQuadMesh) {
+    return
+  }
+
+  const sourceBounds = computeQuadMeshBounds(currentSourceQuadMesh)
+  const sourceCenter = sourceBounds.getCenter(new THREE.Vector3())
+  const sourceSize = sourceBounds.getSize(new THREE.Vector3())
+  const targetSize = loadedTargetSurface.bounds.getSize(new THREE.Vector3())
+  const safeTargetSize = new THREE.Vector3(
+    Math.max(targetSize.x, 1e-6),
+    Math.max(targetSize.y, 1e-6),
+    Math.max(targetSize.z, 1e-6),
+  )
+  const fitScale = Math.min(sourceSize.x / safeTargetSize.x, sourceSize.y / safeTargetSize.y, sourceSize.z / safeTargetSize.z)
+  loadedTargetSurface.previewMesh.position.copy(sourceCenter)
+  loadedTargetSurface.previewMesh.rotation.set(0, 0, 0)
+  loadedTargetSurface.previewMesh.scale.setScalar(clampNumber(fitScale, 1e-4, 1e4))
+  loadedTargetSurface.previewMesh.updateMatrixWorld(true)
+  if (targetMappingEnabled) {
+    rebuildBatwing()
+  }
 }
 
 function parseObjGeometry(source: string): THREE.BufferGeometry | null {
@@ -3119,15 +3198,6 @@ function parseStlGeometry(buffer: ArrayBuffer): THREE.BufferGeometry | null {
   }
   const geometry = new STLLoader().parse(buffer)
   return geometry
-}
-
-function extractGeometryPoints(geometry: THREE.BufferGeometry): THREE.Vector3[] {
-  const position = geometry.getAttribute('position')
-  const points: THREE.Vector3[] = []
-  for (let index = 0; index < position.count; index += 1) {
-    points.push(new THREE.Vector3(position.getX(index), position.getY(index), position.getZ(index)))
-  }
-  return points
 }
 
 function extractGeometryTriangles(
@@ -4928,6 +4998,7 @@ function animate(): void {
 function cleanup(): void {
   window.cancelAnimationFrame(animationFrameId)
   controls.dispose()
+  targetTransformControl.dispose()
   for (const control of latticeTransformControls) {
     control.dispose()
   }
@@ -4942,6 +5013,11 @@ function cleanup(): void {
   wireOverlay.material.dispose()
   boxGuide.geometry.dispose()
   boxGuide.material.dispose()
+  if (loadedTargetSurface) {
+    scene.remove(loadedTargetSurface.previewMesh)
+    loadedTargetSurface.previewMesh.geometry.dispose()
+    loadedTargetSurface.previewMesh.material.dispose()
+  }
   seamDebugPoints.geometry.dispose()
   seamDebugPoints.material.dispose()
   reflectionEnvironment.dispose()
@@ -5020,9 +5096,50 @@ loadTargetSurfaceButton.addEventListener('click', () => {
   void loadTargetSurfaceFromInput()
 })
 clearTargetSurfaceButton.addEventListener('click', () => {
+  if (loadedTargetSurface) {
+    scene.remove(loadedTargetSurface.previewMesh)
+    loadedTargetSurface.previewMesh.geometry.dispose()
+    loadedTargetSurface.previewMesh.material.dispose()
+  }
   loadedTargetSurface = null
+  targetMappingEnabled = false
+  targetTransformControl.detach()
+  targetTransformControl.enabled = false
+  targetTransformHelper.visible = false
   targetSurfaceFileInput.value = ''
   rebuildBatwing()
+})
+snapTargetToBatwingButton.addEventListener('click', () => {
+  snapTargetToBatwingBounds()
+})
+mapTargetButton.addEventListener('click', () => {
+  if (!loadedTargetSurface) {
+    return
+  }
+  targetMappingEnabled = true
+  rebuildBatwing()
+})
+unmapTargetButton.addEventListener('click', () => {
+  targetMappingEnabled = false
+  rebuildBatwing()
+})
+targetMoveModeButton.addEventListener('click', () => {
+  if (!loadedTargetSurface) {
+    return
+  }
+  targetTransformControl.setMode('translate')
+})
+targetRotateModeButton.addEventListener('click', () => {
+  if (!loadedTargetSurface) {
+    return
+  }
+  targetTransformControl.setMode('rotate')
+})
+targetScaleModeButton.addEventListener('click', () => {
+  if (!loadedTargetSurface) {
+    return
+  }
+  targetTransformControl.setMode('scale')
 })
 
 latticeResetButton.addEventListener('click', () => {
