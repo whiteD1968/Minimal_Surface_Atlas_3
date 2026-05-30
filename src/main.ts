@@ -156,6 +156,8 @@ type BatwingAppState = {
   showLatticeControls: boolean
   showBackFaces: boolean
   showSeamDebug: boolean
+  foilColorHex: string
+  wireColorHex: string
 }
 
 type LoadedTargetSurface = {
@@ -514,7 +516,7 @@ app.innerHTML = `
             </label>
             <label class="control" for="topThinSlider">
               <div class="control-row">
-                <span>Thinner At Top</span>
+                <span>Top Taper</span>
                 <input id="top-thin-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="2" step="0.01" value="0.00" />
               </div>
               <input id="topThinSlider" type="range" min="0" max="2" value="0" step="0.01" />
@@ -679,6 +681,18 @@ app.innerHTML = `
               <span>Seam Debug</span>
               <input id="seamDebugToggle" type="checkbox" />
             </label>
+            <label class="control" for="foilColorInput">
+              <div class="control-row">
+                <span>Foil Color</span>
+                <input id="foilColorInput" type="color" value="#f1f5ff" />
+              </div>
+            </label>
+            <label class="control" for="wireColorInput">
+              <div class="control-row">
+                <span>Wire Color</span>
+                <input id="wireColorInput" type="color" value="#37506c" />
+              </div>
+            </label>
           </div>
         </section>
         <section class="panel-section">
@@ -791,6 +805,8 @@ const boxGuideToggle = requireElement<HTMLInputElement>('#boxGuideToggle')
 const latticeControlsToggle = requireElement<HTMLInputElement>('#latticeControlsToggle')
 const backFacesToggle = requireElement<HTMLInputElement>('#backFacesToggle')
 const seamDebugToggle = requireElement<HTMLInputElement>('#seamDebugToggle')
+const foilColorInput = requireElement<HTMLInputElement>('#foilColorInput')
+const wireColorInput = requireElement<HTMLInputElement>('#wireColorInput')
 const geometryTypeSelect = requireElement<HTMLSelectElement>('#geometryTypeSelect')
 const batwingFamilySelect = requireElement<HTMLSelectElement>('#batwingFamilySelect')
 const targetSurfaceFileInput = requireElement<HTMLInputElement>('#targetSurfaceFileInput')
@@ -1177,6 +1193,7 @@ const batwingMaterial = new THREE.MeshPhysicalMaterial({
   polygonOffsetUnits: 1,
 })
 installEggIridescenceShader(batwingMaterial, eggIridescenceState)
+const userFoilColor = new THREE.Color(FOIL_MATERIAL_STYLE.color)
 
 const initialGeometrySet = buildBatwingGeometrySet(
   DEFAULT_GEOMETRY_TYPE,
@@ -1209,20 +1226,24 @@ seamDebugPoints.visible = seamDebugToggle.checked
 seamDebugPoints.renderOrder = 10
 scene.add(seamDebugPoints)
 
+const wireMaterial = new THREE.LineBasicMaterial({
+  color: 0x37506c,
+  transparent: true,
+  opacity: 0.46,
+  depthWrite: false,
+  toneMapped: false,
+})
+
 const wireOverlay = new THREE.LineSegments(
   initialGeometrySet.wireGeometry,
-  new THREE.LineBasicMaterial({
-    color: 0x37506c,
-    transparent: true,
-    opacity: 0.46,
-    depthWrite: false,
-    toneMapped: false,
-  }),
+  wireMaterial,
 )
 wireOverlay.visible = wireToggle.checked
 wireOverlay.frustumCulled = false
 wireOverlay.renderOrder = 3
 scene.add(wireOverlay)
+applyFoilColorFromHex(`#${FOIL_MATERIAL_STYLE.color.toString(16).padStart(6, '0')}`)
+applyWireColorFromHex('#37506c')
 
 const boxGuide = new THREE.LineSegments(
   buildArrayBoxGuideGeometry(DEFAULT_ARRAY_SETTINGS),
@@ -1586,6 +1607,8 @@ function cloneAppState(state: BatwingAppState): BatwingAppState {
     showLatticeControls: state.showLatticeControls,
     showBackFaces: state.showBackFaces,
     showSeamDebug: state.showSeamDebug,
+    foilColorHex: state.foilColorHex,
+    wireColorHex: state.wireColorHex,
   }
 }
 
@@ -1608,6 +1631,8 @@ function captureAppState(): BatwingAppState {
     showLatticeControls: latticeControlsToggle.checked,
     showBackFaces: backFacesToggle.checked,
     showSeamDebug: seamDebugToggle.checked,
+    foilColorHex: normalizeColorInputHex(foilColorInput.value, userFoilColor.getHexString()),
+    wireColorHex: normalizeColorInputHex(wireColorInput.value, wireMaterial.color.getHexString()),
   }
 }
 
@@ -1647,7 +1672,9 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.showBoxGuide === b.showBoxGuide &&
     a.showLatticeControls === b.showLatticeControls &&
     a.showBackFaces === b.showBackFaces &&
-    a.showSeamDebug === b.showSeamDebug
+    a.showSeamDebug === b.showSeamDebug &&
+    a.foilColorHex === b.foilColorHex &&
+    a.wireColorHex === b.wireColorHex
   )
 }
 
@@ -1719,6 +1746,8 @@ function applyAppState(state: BatwingAppState): void {
   applyBackFacesDiagnosticMode(state.showBackFaces)
   seamDebugToggle.checked = state.showSeamDebug
   seamDebugPoints.visible = state.showSeamDebug
+  applyFoilColorFromHex(state.foilColorHex)
+  applyWireColorFromHex(state.wireColorHex)
   isApplyingHistoryState = false
 }
 
@@ -3742,11 +3771,12 @@ function buildSubdividedWeldedArrayQuadMesh(
   symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   const weldedMesh = buildWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings)
-  const depthAdjustedMesh = applyStructuralDepthGradient(weldedMesh, depthGradientSettings)
+  const depthThicknessScaleMap = buildDepthGradientThicknessScaleMap(weldedMesh, depthGradientSettings)
   const thickenedMesh = createThickenedQuadMesh(
-    depthAdjustedMesh,
+    weldedMesh,
     arraySettings.thickness,
     buildArrayCenterThicknessNormalMap(arraySettings),
+    depthThicknessScaleMap,
   )
   return weldQuadMeshByPositionPreservingFaceDirections(subdivideCatmullClark(thickenedMesh, arraySettings.subdivisions))
 }
@@ -3777,9 +3807,11 @@ function buildCheckerboardArrayQuadMesh(
 
   forEachArrayOffset(arraySettings, (offset, _instanceIndex, lengthIndex, widthIndex, heightIndex) => {
     for (const transform of symmetryTransforms) {
+      const transformedVertices = baseMesh.vertices.map((vertex) => applySymmetryTransform(vertex, transform))
+      const normalizedVertices = normalizeVerticesToCellBounds(transformedVertices)
       const vertexOffset = vertices.length
-      for (const vertex of baseMesh.vertices) {
-        vertices.push(applySymmetryTransform(vertex, transform).add(offset))
+      for (const vertex of normalizedVertices) {
+        vertices.push(vertex.clone().add(offset))
       }
 
       const flipWinding = shouldFlipArrayCellWinding(lengthIndex, widthIndex, heightIndex)
@@ -3795,17 +3827,41 @@ function buildCheckerboardArrayQuadMesh(
   }
 }
 
-function applyStructuralDepthGradient(
+function normalizeVerticesToCellBounds(vertices: readonly THREE.Vector3[]): THREE.Vector3[] {
+  if (vertices.length === 0) {
+    return []
+  }
+
+  const bounds = new THREE.Box3()
+  for (const vertex of vertices) {
+    bounds.expandByPoint(vertex)
+  }
+  const size = bounds.getSize(new THREE.Vector3())
+  const center = bounds.getCenter(new THREE.Vector3())
+  const halfWidth = BATWING_BOX_DIMENSIONS.width / 2
+  const halfHeight = BATWING_BOX_DIMENSIONS.height / 2
+  const halfDepth = BATWING_BOX_DIMENSIONS.depth / 2
+
+  return vertices.map((vertex) => {
+    const x = Math.abs(size.x) <= SCALE_EPSILON ? 0 : ((vertex.x - center.x) / (size.x / 2)) * halfWidth
+    const y = Math.abs(size.y) <= SCALE_EPSILON ? 0 : ((vertex.y - center.y) / (size.y / 2)) * halfHeight
+    const z = Math.abs(size.z) <= SCALE_EPSILON ? 0 : ((vertex.z - center.z) / (size.z / 2)) * halfDepth
+    return new THREE.Vector3(x, y, z)
+  })
+}
+
+function buildDepthGradientThicknessScaleMap(
   quadMesh: QuadMeshData,
   settings: BatwingDepthGradientSettings,
-): QuadMeshData {
+): Map<string, number> {
+  const scaleMap = new Map<string, number>()
   if (
     settings.baseDepth <= 1e-6 &&
     settings.topThin <= 1e-6 &&
     settings.supportThicken <= 1e-6 &&
     settings.openingThin <= 1e-6
   ) {
-    return quadMesh
+    return scaleMap
   }
 
   const bounds = computeQuadMeshBounds(quadMesh)
@@ -3822,10 +3878,9 @@ function applyStructuralDepthGradient(
     new THREE.Vector2(max.x, max.z),
   ]
 
-  const vertices = quadMesh.vertices.map((vertex) => {
+  for (const vertex of quadMesh.vertices) {
     const yNorm = Math.abs(size.y) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.y - min.y) / size.y, 0, 1)
     const baseTerm = (1 - yNorm) * settings.baseDepth
-    const topTerm = yNorm * settings.topThin
 
     const distanceToSupport = supportCorners.reduce(
       (nearest, support) => Math.min(nearest, support.distanceTo(new THREE.Vector2(vertex.x, vertex.z))),
@@ -3841,19 +3896,19 @@ function applyStructuralDepthGradient(
       periodicCenterWeight(vertex.z, min.z, cellDepth)
     const openingTerm = openingProximity * settings.openingThin
 
-    const combined = (baseTerm + supportTerm - topTerm - openingTerm) * clampNumber(settings.effectStrength, 0, 1)
+    // Preserve top baseline thickness by design: all additive terms attenuate with (1 - yNorm).
+    const topAttenuation = 1 - yNorm
+    const topTaper = clampNumber(settings.topThin, 0, MAX_DEPTH_GRADIENT_FACTOR)
+    const taperResponse = Math.pow(topAttenuation, 1 + topTaper * 1.5)
+    const combined =
+      (baseTerm + supportTerm * topAttenuation - openingTerm * topAttenuation) *
+      taperResponse *
+      clampNumber(settings.effectStrength, 0, 1)
     const depthScale = clampNumber(1 + combined, 0.25, 3.0)
-
-    const scaledX = min.x + (vertex.x - min.x) * depthScale
-    const scaledZ = min.z + (vertex.z - min.z) * depthScale
-    const scaledY = min.y + (vertex.y - min.y) * (0.6 + depthScale * 0.4)
-    return new THREE.Vector3(scaledX, scaledY, scaledZ)
-  })
-
-  return {
-    vertices,
-    quadFaces: quadMesh.quadFaces,
+    scaleMap.set(getWeldKey(vertex.x, vertex.y, vertex.z), depthScale)
   }
+
+  return scaleMap
 }
 
 function periodicCenterWeight(value: number, origin: number, period: number): number {
@@ -3921,6 +3976,7 @@ function createThickenedQuadMesh(
   quadMesh: QuadMeshData,
   thickness: number,
   forcedThicknessNormalMap = new Map<string, THREE.Vector3>(),
+  thicknessScaleMap = new Map<string, number>(),
 ): QuadMeshData {
   const safeThickness = clampNumber(thickness, 0, MAX_THICKNESS)
   if (safeThickness <= 0.0001) {
@@ -3941,11 +3997,15 @@ function createThickenedQuadMesh(
   const quadFaces: QuadFace[] = []
 
   for (let index = 0; index < vertexCount; index += 1) {
-    vertices.push(quadMesh.vertices[index].clone().addScaledVector(vertexNormals[index], halfThickness))
+    const vertex = quadMesh.vertices[index]
+    const scale = clampNumber(thicknessScaleMap.get(getWeldKey(vertex.x, vertex.y, vertex.z)) ?? 1, 0.1, 4)
+    vertices.push(vertex.clone().addScaledVector(vertexNormals[index], halfThickness * scale))
   }
 
   for (let index = 0; index < vertexCount; index += 1) {
-    vertices.push(quadMesh.vertices[index].clone().addScaledVector(vertexNormals[index], -halfThickness))
+    const vertex = quadMesh.vertices[index]
+    const scale = clampNumber(thicknessScaleMap.get(getWeldKey(vertex.x, vertex.y, vertex.z)) ?? 1, 0.1, 4)
+    vertices.push(vertex.clone().addScaledVector(vertexNormals[index], -halfThickness * scale))
   }
 
   for (const [a, b, c, d] of quadMesh.quadFaces) {
@@ -4421,7 +4481,7 @@ function buildArrayBoxGuideGeometry(arraySettings: BatwingArraySettings): THREE.
 }
 
 function applyMaterialStyle(style: BatwingMaterialStyle): void {
-  batwingMesh.material.color.setHex(style.color)
+  batwingMesh.material.color.copy(userFoilColor)
   batwingMesh.material.metalness = style.metalness
   batwingMesh.material.roughness = style.roughness
   batwingMesh.material.clearcoat = style.clearcoat
@@ -4442,6 +4502,29 @@ function applyMaterialStyle(style: BatwingMaterialStyle): void {
     eggIridescenceState.uniforms.uEggIridescenceFrequency.value = style.eggIridescenceFrequency
   }
   batwingMesh.material.needsUpdate = true
+}
+
+function normalizeColorInputHex(value: string, fallbackHex: string): string {
+  const match = /^#[0-9a-fA-F]{6}$/.exec(value)
+  if (match) {
+    return value.toLowerCase()
+  }
+  return `#${fallbackHex.toLowerCase()}`
+}
+
+function applyFoilColorFromHex(hex: string): void {
+  const normalized = normalizeColorInputHex(hex, userFoilColor.getHexString())
+  foilColorInput.value = normalized
+  userFoilColor.set(normalized)
+  batwingMesh.material.color.copy(userFoilColor)
+  batwingMesh.material.needsUpdate = true
+}
+
+function applyWireColorFromHex(hex: string): void {
+  const normalized = normalizeColorInputHex(hex, wireMaterial.color.getHexString())
+  wireColorInput.value = normalized
+  wireMaterial.color.set(normalized)
+  wireMaterial.needsUpdate = true
 }
 
 function applyBackFacesDiagnosticMode(enabled: boolean): void {
@@ -4987,6 +5070,22 @@ seamDebugToggle.addEventListener('change', () => {
   previousState.showSeamDebug = !seamDebugToggle.checked
   seamDebugPoints.visible = seamDebugToggle.checked
   commitHistoryCheckpoint(previousState)
+})
+
+foilColorInput.addEventListener('input', () => {
+  beginControlHistoryEdit()
+  applyFoilColorFromHex(foilColorInput.value)
+})
+foilColorInput.addEventListener('change', () => {
+  finishControlHistoryEdit()
+})
+
+wireColorInput.addEventListener('input', () => {
+  beginControlHistoryEdit()
+  applyWireColorFromHex(wireColorInput.value)
+})
+wireColorInput.addEventListener('change', () => {
+  finishControlHistoryEdit()
 })
 
 boxGuideToggle.addEventListener('change', () => {
