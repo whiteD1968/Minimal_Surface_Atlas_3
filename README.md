@@ -1,6 +1,6 @@
-# 260428_BatwingGyroid
+# Minimal Surface Atlas
 
-260428_BatwingGyroid is a Vite + TypeScript + Three.js batwing mesh generator for building a welded, arrayed batwing surface in a live browser tool. The app starts from a fixed centered source cube, treats `G0` as the top square and `G1` as the bottom square, then rebuilds a welded batwing array from four vertex-position sliders. The current tool includes thickness, Catmull-Clark subdivision, lattice deformation, face-direction inspection, display toggles, and OBJ / GLB / PNG export while keeping the studio scene, reflective material style, grid, and floating panel workflow from the reference canopy project.
+Minimal Surface Atlas is a Vite + TypeScript + Three.js batwing mesh generator for building a welded, arrayed batwing surface in a live browser tool. The app starts from a fixed centered source cube, treats `G0` as the top square and `G1` as the bottom square, then rebuilds a welded batwing array from four vertex-position sliders. The current tool includes thickness, Catmull-Clark subdivision, lattice deformation, face-direction inspection, display toggles, and OBJ / GLB / PNG export while keeping the studio scene, reflective material style, grid, and floating panel workflow from the reference canopy project.
 
 ## Features
 - Fixed-cube batwing generator based on a 4-vertex `G0` / `G1` curve workflow.

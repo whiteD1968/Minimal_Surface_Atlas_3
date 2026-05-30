@@ -3,6 +3,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { TransformControls } from 'three/addons/controls/TransformControls.js'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
+import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import {
   BATWING_BOX_DIMENSIONS,
   type BatwingFamilyType,
@@ -32,10 +34,28 @@ type BatwingArraySettings = {
   subdivisions: number
 }
 
+type BatwingSymmetrySettings = {
+  rotationalCopies: number
+  screwHeightPerCopy: number
+  glideOffsetX: number
+}
+
 type ArrayControlKey = keyof BatwingArraySettings
 
 type ArraySliderBinding = {
   key: ArrayControlKey
+  fallback: number
+  min: number
+  max: number
+  integer: boolean
+  slider: HTMLInputElement
+  valueInput: HTMLInputElement
+}
+
+type SymmetryControlKey = keyof BatwingSymmetrySettings
+
+type SymmetrySliderBinding = {
+  key: SymmetryControlKey
   fallback: number
   min: number
   max: number
@@ -50,10 +70,43 @@ type BatwingLatticeSettings = {
   heightDivisions: number
 }
 
+type BatwingLatticeInfluenceSettings = {
+  falloffRadius: number
+  falloffStrength: number
+}
+
+type BatwingTargetSurfaceSettings = {
+  blend: number
+  offset: number
+  targetScale: number
+}
+
 type LatticeControlKey = keyof BatwingLatticeSettings
 
 type LatticeSliderBinding = {
   key: LatticeControlKey
+  fallback: number
+  min: number
+  max: number
+  slider: HTMLInputElement
+  valueInput: HTMLInputElement
+}
+
+type LatticeInfluenceControlKey = keyof BatwingLatticeInfluenceSettings
+
+type LatticeInfluenceSliderBinding = {
+  key: LatticeInfluenceControlKey
+  fallback: number
+  min: number
+  max: number
+  slider: HTMLInputElement
+  valueInput: HTMLInputElement
+}
+
+type TargetSurfaceControlKey = keyof BatwingTargetSurfaceSettings
+
+type TargetSurfaceSliderBinding = {
+  key: TargetSurfaceControlKey
   fallback: number
   min: number
   max: number
@@ -71,7 +124,10 @@ type BatwingAppState = {
   batwingFamily: BatwingFamilyType
   settings: BatwingSettings
   arraySettings: BatwingArraySettings
+  symmetrySettings: BatwingSymmetrySettings
   latticeSettings: BatwingLatticeSettings
+  latticeInfluenceSettings: BatwingLatticeInfluenceSettings
+  targetSurfaceSettings: BatwingTargetSurfaceSettings
   latticePointPositions: number[] | null
   showBaseGrid: boolean
   showWireframe: boolean
@@ -80,6 +136,13 @@ type BatwingAppState = {
   showLatticeControls: boolean
   showBackFaces: boolean
   showSeamDebug: boolean
+}
+
+type LoadedTargetSurface = {
+  name: string
+  points: THREE.Vector3[]
+  triangles: Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>
+  bounds: THREE.Box3
 }
 
 type BatwingMaterialStyle = {
@@ -146,6 +209,8 @@ type LatticeTransformDragState = {
   anchorStartMatrix: THREE.Matrix4
   anchorStartInverse: THREE.Matrix4
   pointStartPositions: Map<number, THREE.Vector3>
+  allPointStartPositions: Map<number, THREE.Vector3>
+  influenceWeights: Map<number, number>
 }
 
 type LatticeTransformControlHandle = {
@@ -175,14 +240,21 @@ declare global {
   }
 }
 
-document.title = '260428_BatwingGyroid'
+document.title = 'Minimal Surface Atlas'
 
-const EXPORT_BASE_NAME = '260428_BatwingGyroid'
+const EXPORT_BASE_NAME = 'Minimal_Surface_Atlas'
 const MAX_HISTORY_STATES = 100
 const MAX_ARRAY_COUNT = 20
 const MAX_THICKNESS = 1
 const MAX_SUBDIVISIONS = 3
 const MAX_LATTICE_DIVISIONS = 20
+const MAX_SYMMETRY_COPIES = 6
+const MAX_SYMMETRY_SCREW_HEIGHT = 8
+const MAX_SYMMETRY_GLIDE_OFFSET = 8
+const MAX_LATTICE_FALLOFF_RADIUS = 12
+const MAX_TARGET_BLEND = 1
+const MAX_TARGET_OFFSET = 6
+const MAX_TARGET_SCALE = 20
 const WELD_EPSILON = 1e-5
 const LATTICE_POINT_SIZE = 0.0825
 const LATTICE_MARQUEE_THRESHOLD = 4
@@ -213,10 +285,24 @@ const DEFAULT_ARRAY_SETTINGS: BatwingArraySettings = {
   thickness: 0,
   subdivisions: 0,
 }
+const DEFAULT_SYMMETRY_SETTINGS: BatwingSymmetrySettings = {
+  rotationalCopies: 1,
+  screwHeightPerCopy: 0,
+  glideOffsetX: 0,
+}
 const DEFAULT_LATTICE_SETTINGS: BatwingLatticeSettings = {
   lengthDivisions: 1,
   widthDivisions: 1,
   heightDivisions: 1,
+}
+const DEFAULT_LATTICE_INFLUENCE_SETTINGS: BatwingLatticeInfluenceSettings = {
+  falloffRadius: 0,
+  falloffStrength: 1,
+}
+const DEFAULT_TARGET_SURFACE_SETTINGS: BatwingTargetSurfaceSettings = {
+  blend: 1,
+  offset: 0,
+  targetScale: 1,
 }
 
 const FOIL_MATERIAL_STYLE: BatwingMaterialStyle = {
@@ -388,9 +474,68 @@ app.innerHTML = `
         </section>
         <section class="panel-section">
           <button class="panel-section-header" type="button" aria-expanded="true">
+            <span class="panel-section-label">Symmetry</span>
+          </button>
+          <div class="panel-section-content panel-controls-stack">
+            <label class="control" for="rotationalCopiesSlider">
+              <div class="control-row">
+                <span>Rotational Copies</span>
+                <input id="rotational-copies-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="6" step="1" value="1" />
+              </div>
+              <input id="rotationalCopiesSlider" type="range" min="1" max="6" value="1" step="1" />
+            </label>
+            <label class="control" for="screwHeightSlider">
+              <div class="control-row">
+                <span>Screw Height / Copy</span>
+                <input id="screw-height-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="8" step="0.01" value="0.00" />
+              </div>
+              <input id="screwHeightSlider" type="range" min="0" max="8" value="0" step="0.01" />
+            </label>
+            <label class="control" for="glideOffsetSlider">
+              <div class="control-row">
+                <span>Glide Offset X</span>
+                <input id="glide-offset-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="8" step="0.01" value="0.00" />
+              </div>
+              <input id="glideOffsetSlider" type="range" min="0" max="8" value="0" step="0.01" />
+            </label>
+          </div>
+        </section>
+        <section class="panel-section">
+          <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Lattice</span>
           </button>
           <div class="panel-section-content panel-controls-stack">
+            <label class="control" for="targetSurfaceFileInput">
+              <div class="control-row">
+                <span>Target Surface File</span>
+                <input id="targetSurfaceFileInput" type="file" accept=".obj,.stl" />
+              </div>
+            </label>
+            <div class="control control-grid-2">
+              <button id="loadTargetSurfaceButton" class="pill-button" type="button">Load Target</button>
+              <button id="clearTargetSurfaceButton" class="pill-button" type="button">Clear Target</button>
+            </div>
+            <label class="control" for="targetBlendSlider">
+              <div class="control-row">
+                <span>Surface Blend</span>
+                <input id="target-blend-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="1" step="0.01" value="1.00" />
+              </div>
+              <input id="targetBlendSlider" type="range" min="0" max="1" value="1" step="0.01" />
+            </label>
+            <label class="control" for="targetOffsetSlider">
+              <div class="control-row">
+                <span>Normal Offset</span>
+                <input id="target-offset-value" class="value-pill value-input" type="number" inputmode="decimal" min="-6" max="6" step="0.01" value="0.00" />
+              </div>
+              <input id="targetOffsetSlider" type="range" min="-6" max="6" value="0" step="0.01" />
+            </label>
+            <label class="control" for="targetScaleSlider">
+              <div class="control-row">
+                <span>Target Scale</span>
+                <input id="target-scale-value" class="value-pill value-input" type="number" inputmode="decimal" min="0.05" max="20" step="0.01" value="1.00" />
+              </div>
+              <input id="targetScaleSlider" type="range" min="0.05" max="20" value="1" step="0.01" />
+            </label>
             <label class="control" for="lengthDivisionSlider">
               <div class="control-row">
                 <span>Length Division</span>
@@ -411,6 +556,20 @@ app.innerHTML = `
                 <input id="height-division-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="20" step="1" value="1" />
               </div>
               <input id="heightDivisionSlider" type="range" min="1" max="20" value="1" step="1" />
+            </label>
+            <label class="control" for="falloffRadiusSlider">
+              <div class="control-row">
+                <span>Falloff Radius</span>
+                <input id="falloff-radius-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="12" step="0.01" value="0.00" />
+              </div>
+              <input id="falloffRadiusSlider" type="range" min="0" max="12" value="0" step="0.01" />
+            </label>
+            <label class="control" for="falloffStrengthSlider">
+              <div class="control-row">
+                <span>Falloff Strength</span>
+                <input id="falloff-strength-value" class="value-pill value-input" type="number" inputmode="decimal" min="0" max="1" step="0.01" value="1.00" />
+              </div>
+              <input id="falloffStrengthSlider" type="range" min="0" max="1" value="1" step="0.01" />
             </label>
             <div class="control">
               <button id="latticeResetButton" class="pill-button control-button-wide" type="button">Reset</button>
@@ -564,6 +723,9 @@ const backFacesToggle = requireElement<HTMLInputElement>('#backFacesToggle')
 const seamDebugToggle = requireElement<HTMLInputElement>('#seamDebugToggle')
 const geometryTypeSelect = requireElement<HTMLSelectElement>('#geometryTypeSelect')
 const batwingFamilySelect = requireElement<HTMLSelectElement>('#batwingFamilySelect')
+const targetSurfaceFileInput = requireElement<HTMLInputElement>('#targetSurfaceFileInput')
+const loadTargetSurfaceButton = requireElement<HTMLButtonElement>('#loadTargetSurfaceButton')
+const clearTargetSurfaceButton = requireElement<HTMLButtonElement>('#clearTargetSurfaceButton')
 
 const sliderBindings: SliderBinding[] = [
   {
@@ -640,6 +802,36 @@ const arraySliderBindings: ArraySliderBinding[] = [
   },
 ]
 
+const symmetrySliderBindings: SymmetrySliderBinding[] = [
+  {
+    key: 'rotationalCopies',
+    fallback: DEFAULT_SYMMETRY_SETTINGS.rotationalCopies,
+    min: 1,
+    max: MAX_SYMMETRY_COPIES,
+    integer: true,
+    slider: requireElement<HTMLInputElement>('#rotationalCopiesSlider'),
+    valueInput: requireElement<HTMLInputElement>('#rotational-copies-value'),
+  },
+  {
+    key: 'screwHeightPerCopy',
+    fallback: DEFAULT_SYMMETRY_SETTINGS.screwHeightPerCopy,
+    min: 0,
+    max: MAX_SYMMETRY_SCREW_HEIGHT,
+    integer: false,
+    slider: requireElement<HTMLInputElement>('#screwHeightSlider'),
+    valueInput: requireElement<HTMLInputElement>('#screw-height-value'),
+  },
+  {
+    key: 'glideOffsetX',
+    fallback: DEFAULT_SYMMETRY_SETTINGS.glideOffsetX,
+    min: 0,
+    max: MAX_SYMMETRY_GLIDE_OFFSET,
+    integer: false,
+    slider: requireElement<HTMLInputElement>('#glideOffsetSlider'),
+    valueInput: requireElement<HTMLInputElement>('#glide-offset-value'),
+  },
+]
+
 const latticeSliderBindings: LatticeSliderBinding[] = [
   {
     key: 'lengthDivisions',
@@ -664,6 +856,52 @@ const latticeSliderBindings: LatticeSliderBinding[] = [
     max: MAX_LATTICE_DIVISIONS,
     slider: requireElement<HTMLInputElement>('#heightDivisionSlider'),
     valueInput: requireElement<HTMLInputElement>('#height-division-value'),
+  },
+]
+
+const latticeInfluenceSliderBindings: LatticeInfluenceSliderBinding[] = [
+  {
+    key: 'falloffRadius',
+    fallback: DEFAULT_LATTICE_INFLUENCE_SETTINGS.falloffRadius,
+    min: 0,
+    max: MAX_LATTICE_FALLOFF_RADIUS,
+    slider: requireElement<HTMLInputElement>('#falloffRadiusSlider'),
+    valueInput: requireElement<HTMLInputElement>('#falloff-radius-value'),
+  },
+  {
+    key: 'falloffStrength',
+    fallback: DEFAULT_LATTICE_INFLUENCE_SETTINGS.falloffStrength,
+    min: 0,
+    max: 1,
+    slider: requireElement<HTMLInputElement>('#falloffStrengthSlider'),
+    valueInput: requireElement<HTMLInputElement>('#falloff-strength-value'),
+  },
+]
+
+const targetSurfaceSliderBindings: TargetSurfaceSliderBinding[] = [
+  {
+    key: 'blend',
+    fallback: DEFAULT_TARGET_SURFACE_SETTINGS.blend,
+    min: 0,
+    max: MAX_TARGET_BLEND,
+    slider: requireElement<HTMLInputElement>('#targetBlendSlider'),
+    valueInput: requireElement<HTMLInputElement>('#target-blend-value'),
+  },
+  {
+    key: 'offset',
+    fallback: DEFAULT_TARGET_SURFACE_SETTINGS.offset,
+    min: -MAX_TARGET_OFFSET,
+    max: MAX_TARGET_OFFSET,
+    slider: requireElement<HTMLInputElement>('#targetOffsetSlider'),
+    valueInput: requireElement<HTMLInputElement>('#target-offset-value'),
+  },
+  {
+    key: 'targetScale',
+    fallback: DEFAULT_TARGET_SURFACE_SETTINGS.targetScale,
+    min: 0.05,
+    max: MAX_TARGET_SCALE,
+    slider: requireElement<HTMLInputElement>('#targetScaleSlider'),
+    valueInput: requireElement<HTMLInputElement>('#target-scale-value'),
   },
 ]
 
@@ -718,6 +956,7 @@ controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE
 
 let currentSourceQuadMesh: QuadMeshData | null = null
 let latticeState: LatticeState | null = null
+let loadedTargetSurface: LoadedTargetSurface | null = null
 let latticePointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
 let latticeHighlightPointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
 let latticeLineSegments: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null
@@ -831,6 +1070,7 @@ const initialGeometrySet = buildBatwingGeometrySet(
   DEFAULT_BATWING_FAMILY,
   DEFAULT_SETTINGS,
   DEFAULT_ARRAY_SETTINGS,
+  DEFAULT_SYMMETRY_SETTINGS,
 )
 const batwingMesh = new THREE.Mesh(initialGeometrySet.meshGeometry, batwingMaterial)
 batwingMesh.castShadow = false
@@ -920,8 +1160,20 @@ function readArraySliderNumber(binding: ArraySliderBinding): number {
   return normalizeArraySliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
 }
 
+function readSymmetrySliderNumber(binding: SymmetrySliderBinding): number {
+  return normalizeSymmetrySliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
+}
+
 function readLatticeSliderNumber(binding: LatticeSliderBinding): number {
   return normalizeLatticeSliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
+}
+
+function readLatticeInfluenceSliderNumber(binding: LatticeInfluenceSliderBinding): number {
+  return normalizeLatticeInfluenceSliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
+}
+
+function readTargetSurfaceSliderNumber(binding: TargetSurfaceSliderBinding): number {
+  return normalizeTargetSurfaceSliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
 }
 
 function normalizeArraySliderValue(binding: ArraySliderBinding, value: number): number {
@@ -937,6 +1189,30 @@ function normalizeLatticeSliderValue(binding: LatticeSliderBinding, value: numbe
   const clampedValue = clampNumber(safeValue, binding.min, binding.max)
   const snappedValue = snapValueToSlider(clampedValue, binding.slider)
   return Math.round(clampNumber(snappedValue, binding.min, binding.max))
+}
+
+function normalizeSymmetrySliderValue(binding: SymmetrySliderBinding, value: number): number {
+  const safeValue = Number.isFinite(value) ? value : binding.fallback
+  const clampedValue = clampNumber(safeValue, binding.min, binding.max)
+  const snappedValue = snapValueToSlider(clampedValue, binding.slider)
+  const nextValue = binding.integer ? Math.round(snappedValue) : snappedValue
+  return clampNumber(nextValue, binding.min, binding.max)
+}
+
+function normalizeLatticeInfluenceSliderValue(binding: LatticeInfluenceSliderBinding, value: number): number {
+  const safeValue = Number.isFinite(value) ? value : binding.fallback
+  const clampedValue = clampNumber(safeValue, binding.min, binding.max)
+  return snapValueToSlider(clampedValue, binding.slider)
+}
+
+function normalizeTargetSurfaceSliderValue(binding: TargetSurfaceSliderBinding, value: number): number {
+  const safeValue = Number.isFinite(value) ? value : binding.fallback
+  const clampedValue = clampNumber(safeValue, binding.min, binding.max)
+  return snapValueToSlider(clampedValue, binding.slider)
+}
+
+function formatSymmetrySliderValue(binding: SymmetrySliderBinding, value: number): string {
+  return binding.integer ? `${Math.round(value)}` : formatSliderValue(value)
 }
 
 function formatArraySliderValue(binding: ArraySliderBinding, value: number): string {
@@ -1031,6 +1307,16 @@ function getCurrentArraySettings(): BatwingArraySettings {
   )
 }
 
+function getCurrentSymmetrySettings(): BatwingSymmetrySettings {
+  return symmetrySliderBindings.reduce<BatwingSymmetrySettings>(
+    (settings, binding) => {
+      settings[binding.key] = readSymmetrySliderNumber(binding)
+      return settings
+    },
+    { ...DEFAULT_SYMMETRY_SETTINGS },
+  )
+}
+
 function getCurrentLatticeSettings(): BatwingLatticeSettings {
   return latticeSliderBindings.reduce<BatwingLatticeSettings>(
     (settings, binding) => {
@@ -1038,6 +1324,26 @@ function getCurrentLatticeSettings(): BatwingLatticeSettings {
       return settings
     },
     { ...DEFAULT_LATTICE_SETTINGS },
+  )
+}
+
+function getCurrentLatticeInfluenceSettings(): BatwingLatticeInfluenceSettings {
+  return latticeInfluenceSliderBindings.reduce<BatwingLatticeInfluenceSettings>(
+    (settings, binding) => {
+      settings[binding.key] = readLatticeInfluenceSliderNumber(binding)
+      return settings
+    },
+    { ...DEFAULT_LATTICE_INFLUENCE_SETTINGS },
+  )
+}
+
+function getCurrentTargetSurfaceSettings(): BatwingTargetSurfaceSettings {
+  return targetSurfaceSliderBindings.reduce<BatwingTargetSurfaceSettings>(
+    (settings, binding) => {
+      settings[binding.key] = readTargetSurfaceSliderNumber(binding)
+      return settings
+    },
+    { ...DEFAULT_TARGET_SURFACE_SETTINGS },
   )
 }
 
@@ -1060,11 +1366,36 @@ function cloneArraySettings(settings: BatwingArraySettings): BatwingArraySetting
   }
 }
 
+function cloneSymmetrySettings(settings: BatwingSymmetrySettings): BatwingSymmetrySettings {
+  return {
+    rotationalCopies: settings.rotationalCopies,
+    screwHeightPerCopy: settings.screwHeightPerCopy,
+    glideOffsetX: settings.glideOffsetX,
+  }
+}
+
 function cloneLatticeSettings(settings: BatwingLatticeSettings): BatwingLatticeSettings {
   return {
     lengthDivisions: settings.lengthDivisions,
     widthDivisions: settings.widthDivisions,
     heightDivisions: settings.heightDivisions,
+  }
+}
+
+function cloneLatticeInfluenceSettings(
+  settings: BatwingLatticeInfluenceSettings,
+): BatwingLatticeInfluenceSettings {
+  return {
+    falloffRadius: settings.falloffRadius,
+    falloffStrength: settings.falloffStrength,
+  }
+}
+
+function cloneTargetSurfaceSettings(settings: BatwingTargetSurfaceSettings): BatwingTargetSurfaceSettings {
+  return {
+    blend: settings.blend,
+    offset: settings.offset,
+    targetScale: settings.targetScale,
   }
 }
 
@@ -1102,7 +1433,10 @@ function cloneAppState(state: BatwingAppState): BatwingAppState {
     batwingFamily: state.batwingFamily,
     settings: cloneSettings(state.settings),
     arraySettings: cloneArraySettings(state.arraySettings),
+    symmetrySettings: cloneSymmetrySettings(state.symmetrySettings),
     latticeSettings: cloneLatticeSettings(state.latticeSettings),
+    latticeInfluenceSettings: cloneLatticeInfluenceSettings(state.latticeInfluenceSettings),
+    targetSurfaceSettings: cloneTargetSurfaceSettings(state.targetSurfaceSettings),
     latticePointPositions: state.latticePointPositions ? [...state.latticePointPositions] : null,
     showBaseGrid: state.showBaseGrid,
     showWireframe: state.showWireframe,
@@ -1120,7 +1454,10 @@ function captureAppState(): BatwingAppState {
     batwingFamily: getCurrentBatwingFamily(),
     settings: getCurrentSettings(),
     arraySettings: getCurrentArraySettings(),
+    symmetrySettings: getCurrentSymmetrySettings(),
     latticeSettings: getCurrentLatticeSettings(),
+    latticeInfluenceSettings: getCurrentLatticeInfluenceSettings(),
+    targetSurfaceSettings: getCurrentTargetSurfaceSettings(),
     latticePointPositions: captureLatticePointPositions(),
     showBaseGrid: baseGridToggle.checked,
     showWireframe: wireToggle.checked,
@@ -1145,9 +1482,17 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.arraySettings.heightCount === b.arraySettings.heightCount &&
     a.arraySettings.thickness === b.arraySettings.thickness &&
     a.arraySettings.subdivisions === b.arraySettings.subdivisions &&
+    a.symmetrySettings.rotationalCopies === b.symmetrySettings.rotationalCopies &&
+    a.symmetrySettings.screwHeightPerCopy === b.symmetrySettings.screwHeightPerCopy &&
+    a.symmetrySettings.glideOffsetX === b.symmetrySettings.glideOffsetX &&
     a.latticeSettings.lengthDivisions === b.latticeSettings.lengthDivisions &&
     a.latticeSettings.widthDivisions === b.latticeSettings.widthDivisions &&
     a.latticeSettings.heightDivisions === b.latticeSettings.heightDivisions &&
+    a.latticeInfluenceSettings.falloffRadius === b.latticeInfluenceSettings.falloffRadius &&
+    a.latticeInfluenceSettings.falloffStrength === b.latticeInfluenceSettings.falloffStrength &&
+    a.targetSurfaceSettings.blend === b.targetSurfaceSettings.blend &&
+    a.targetSurfaceSettings.offset === b.targetSurfaceSettings.offset &&
+    a.targetSurfaceSettings.targetScale === b.targetSurfaceSettings.targetScale &&
     latticePointPositionsEqual(a.latticePointPositions, b.latticePointPositions) &&
     a.showBaseGrid === b.showBaseGrid &&
     a.showWireframe === b.showWireframe &&
@@ -1207,7 +1552,10 @@ function applyAppState(state: BatwingAppState): void {
   applyBatwingFamily(state.batwingFamily)
   applySettings(state.settings)
   applyArraySettings(state.arraySettings)
+  applySymmetrySettings(state.symmetrySettings)
   applyLatticeSettings(state.latticeSettings)
+  applyLatticeInfluenceSettings(state.latticeInfluenceSettings)
+  applyTargetSurfaceSettings(state.targetSurfaceSettings)
   applyLatticePointPositions(state.latticePointPositions)
   baseGridToggle.checked = state.showBaseGrid
   groundGrid.mesh.visible = state.showBaseGrid
@@ -1299,6 +1647,17 @@ function applyArraySettings(settings: BatwingArraySettings): void {
   rebuildBatwing()
 }
 
+function applySymmetrySettings(settings: BatwingSymmetrySettings): void {
+  for (const binding of symmetrySliderBindings) {
+    const nextValue = normalizeSymmetrySliderValue(binding, settings[binding.key])
+    binding.slider.value = `${nextValue}`
+    binding.valueInput.value = formatSymmetrySliderValue(binding, nextValue)
+    updateRangeProgress(binding.slider)
+  }
+
+  rebuildBatwing()
+}
+
 function applyLatticeSettings(settings: BatwingLatticeSettings): void {
   for (const binding of latticeSliderBindings) {
     const nextValue = normalizeLatticeSliderValue(binding, settings[binding.key])
@@ -1307,6 +1666,25 @@ function applyLatticeSettings(settings: BatwingLatticeSettings): void {
     updateRangeProgress(binding.slider)
   }
 
+  rebuildBatwing()
+}
+
+function applyLatticeInfluenceSettings(settings: BatwingLatticeInfluenceSettings): void {
+  for (const binding of latticeInfluenceSliderBindings) {
+    const nextValue = normalizeLatticeInfluenceSliderValue(binding, settings[binding.key])
+    binding.slider.value = `${nextValue}`
+    binding.valueInput.value = formatSliderValue(nextValue)
+    updateRangeProgress(binding.slider)
+  }
+}
+
+function applyTargetSurfaceSettings(settings: BatwingTargetSurfaceSettings): void {
+  for (const binding of targetSurfaceSliderBindings) {
+    const nextValue = normalizeTargetSurfaceSliderValue(binding, settings[binding.key])
+    binding.slider.value = `${nextValue}`
+    binding.valueInput.value = formatSliderValue(nextValue)
+    updateRangeProgress(binding.slider)
+  }
   rebuildBatwing()
 }
 
@@ -1361,11 +1739,37 @@ function commitArrayValueInput(binding: ArraySliderBinding): void {
   rebuildBatwing()
 }
 
+function commitSymmetryValueInput(binding: SymmetrySliderBinding): void {
+  const parsedValue = Number.parseFloat(binding.valueInput.value)
+  const nextValue = normalizeSymmetrySliderValue(binding, parsedValue)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatSymmetrySliderValue(binding, nextValue)
+  updateRangeProgress(binding.slider)
+  rebuildBatwing()
+}
+
 function commitLatticeValueInput(binding: LatticeSliderBinding): void {
   const parsedValue = Number.parseFloat(binding.valueInput.value)
   const nextValue = normalizeLatticeSliderValue(binding, parsedValue)
   binding.slider.value = `${nextValue}`
   binding.valueInput.value = formatLatticeSliderValue(nextValue)
+  updateRangeProgress(binding.slider)
+  rebuildBatwing()
+}
+
+function commitLatticeInfluenceValueInput(binding: LatticeInfluenceSliderBinding): void {
+  const parsedValue = Number.parseFloat(binding.valueInput.value)
+  const nextValue = normalizeLatticeInfluenceSliderValue(binding, parsedValue)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatSliderValue(nextValue)
+  updateRangeProgress(binding.slider)
+}
+
+function commitTargetSurfaceValueInput(binding: TargetSurfaceSliderBinding): void {
+  const parsedValue = Number.parseFloat(binding.valueInput.value)
+  const nextValue = normalizeTargetSurfaceSliderValue(binding, parsedValue)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatSliderValue(nextValue)
   updateRangeProgress(binding.slider)
   rebuildBatwing()
 }
@@ -1461,6 +1865,52 @@ function bindArraySlider(binding: ArraySliderBinding): void {
   })
 }
 
+function bindSymmetrySlider(binding: SymmetrySliderBinding): void {
+  const syncFromSlider = (): void => {
+    beginControlHistoryEdit()
+    const value = readSymmetrySliderNumber(binding)
+    binding.slider.value = `${value}`
+    binding.valueInput.value = formatSymmetrySliderValue(binding, value)
+    updateRangeProgress(binding.slider)
+    rebuildBatwing()
+  }
+
+  binding.slider.addEventListener('pointerdown', beginControlHistoryEdit)
+  binding.slider.addEventListener('pointerup', finishControlHistoryEdit)
+  binding.slider.addEventListener('pointercancel', finishControlHistoryEdit)
+  binding.slider.addEventListener('keydown', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      beginControlHistoryEdit()
+    }
+  })
+  binding.slider.addEventListener('input', syncFromSlider)
+  binding.slider.addEventListener('change', finishControlHistoryEdit)
+  binding.valueInput.addEventListener('focus', beginControlHistoryEdit)
+  binding.valueInput.addEventListener('change', () => {
+    commitSymmetryValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('blur', () => {
+    commitSymmetryValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commitSymmetryValueInput(binding)
+      finishControlHistoryEdit()
+      binding.valueInput.blur()
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      binding.valueInput.value = formatSymmetrySliderValue(binding, readSymmetrySliderNumber(binding))
+      clearControlHistoryEdit()
+      binding.valueInput.blur()
+    }
+  })
+}
+
 function bindLatticeSlider(binding: LatticeSliderBinding): void {
   const syncFromSlider = (): void => {
     beginControlHistoryEdit()
@@ -1507,15 +1957,102 @@ function bindLatticeSlider(binding: LatticeSliderBinding): void {
   })
 }
 
+function bindLatticeInfluenceSlider(binding: LatticeInfluenceSliderBinding): void {
+  const syncFromSlider = (): void => {
+    beginControlHistoryEdit()
+    const value = readLatticeInfluenceSliderNumber(binding)
+    binding.slider.value = `${value}`
+    binding.valueInput.value = formatSliderValue(value)
+    updateRangeProgress(binding.slider)
+  }
+
+  binding.slider.addEventListener('pointerdown', beginControlHistoryEdit)
+  binding.slider.addEventListener('pointerup', finishControlHistoryEdit)
+  binding.slider.addEventListener('pointercancel', finishControlHistoryEdit)
+  binding.slider.addEventListener('keydown', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      beginControlHistoryEdit()
+    }
+  })
+  binding.slider.addEventListener('input', syncFromSlider)
+  binding.slider.addEventListener('change', finishControlHistoryEdit)
+  binding.valueInput.addEventListener('focus', beginControlHistoryEdit)
+  binding.valueInput.addEventListener('change', () => {
+    commitLatticeInfluenceValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('blur', () => {
+    commitLatticeInfluenceValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commitLatticeInfluenceValueInput(binding)
+      finishControlHistoryEdit()
+      binding.valueInput.blur()
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      binding.valueInput.value = formatSliderValue(readLatticeInfluenceSliderNumber(binding))
+      clearControlHistoryEdit()
+      binding.valueInput.blur()
+    }
+  })
+}
+
+function bindTargetSurfaceSlider(binding: TargetSurfaceSliderBinding): void {
+  const syncFromSlider = (): void => {
+    beginControlHistoryEdit()
+    const value = readTargetSurfaceSliderNumber(binding)
+    binding.slider.value = `${value}`
+    binding.valueInput.value = formatSliderValue(value)
+    updateRangeProgress(binding.slider)
+    rebuildBatwing()
+  }
+
+  binding.slider.addEventListener('pointerdown', beginControlHistoryEdit)
+  binding.slider.addEventListener('pointerup', finishControlHistoryEdit)
+  binding.slider.addEventListener('pointercancel', finishControlHistoryEdit)
+  binding.slider.addEventListener('keydown', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      beginControlHistoryEdit()
+    }
+  })
+  binding.slider.addEventListener('input', syncFromSlider)
+  binding.slider.addEventListener('change', finishControlHistoryEdit)
+  binding.valueInput.addEventListener('focus', beginControlHistoryEdit)
+  binding.valueInput.addEventListener('change', () => {
+    commitTargetSurfaceValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('blur', () => {
+    commitTargetSurfaceValueInput(binding)
+    finishControlHistoryEdit()
+  })
+}
+
 function rebuildBatwing(): void {
   const geometryType = getCurrentGeometryType()
   const batwingFamily = getCurrentBatwingFamily()
   const settings = getCurrentSettings()
   const arraySettings = getCurrentArraySettings()
-  const sourceQuadMesh = buildSubdividedWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings)
+  const symmetrySettings = getCurrentSymmetrySettings()
+  const sourceQuadMesh = buildSubdividedWeldedArrayQuadMesh(
+    geometryType,
+    batwingFamily,
+    settings,
+    arraySettings,
+    symmetrySettings,
+  )
   currentSourceQuadMesh = cloneQuadMeshData(sourceQuadMesh)
   rebuildLatticeFromCurrentSource()
-  const nextGeometrySet = buildGeometrySetFromQuadMesh(applyLatticeDeformation(sourceQuadMesh), arraySettings)
+  const drapedQuadMesh = applyTargetSurfaceMapping(
+    applyLatticeDeformation(sourceQuadMesh),
+    getCurrentTargetSurfaceSettings(),
+  )
+  const nextGeometrySet = buildGeometrySetFromQuadMesh(drapedQuadMesh, arraySettings)
 
   batwingMesh.geometry.dispose()
   batwingMesh.geometry = nextGeometrySet.meshGeometry
@@ -1537,7 +2074,11 @@ function rebuildCurrentDeformedGeometry(): void {
   }
 
   const arraySettings = getCurrentArraySettings()
-  const nextGeometrySet = buildGeometrySetFromQuadMesh(applyLatticeDeformation(sourceQuadMesh), arraySettings)
+  const drapedQuadMesh = applyTargetSurfaceMapping(
+    applyLatticeDeformation(sourceQuadMesh),
+    getCurrentTargetSurfaceSettings(),
+  )
+  const nextGeometrySet = buildGeometrySetFromQuadMesh(drapedQuadMesh, arraySettings)
   batwingMesh.geometry.dispose()
   batwingMesh.geometry = nextGeometrySet.meshGeometry
   wireOverlay.geometry.dispose()
@@ -1643,8 +2184,15 @@ function buildBatwingGeometrySet(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  symmetrySettings: BatwingSymmetrySettings,
 ): BatwingGeometrySet {
-  const quadMesh = buildSubdividedWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings)
+  const quadMesh = buildSubdividedWeldedArrayQuadMesh(
+    geometryType,
+    batwingFamily,
+    settings,
+    arraySettings,
+    symmetrySettings,
+  )
   currentSourceQuadMesh = cloneQuadMeshData(quadMesh)
   return buildGeometrySetFromQuadMesh(quadMesh, arraySettings)
 }
@@ -1950,17 +2498,28 @@ function beginLatticeTransformDrag(activeControl: TransformControls): void {
   const anchorStartMatrix = latticeTransformAnchor.matrixWorld.clone()
   const anchorStartInverse = anchorStartMatrix.clone().invert()
   const pointStartPositions = new Map<number, THREE.Vector3>()
+  const allPointStartPositions = new Map<number, THREE.Vector3>()
+  for (const point of latticeState.points) {
+    allPointStartPositions.set(point.index, point.position.clone())
+  }
   selectedLatticePointIndices.forEach((index) => {
     const point = latticeState?.points[index]
     if (point) {
       pointStartPositions.set(index, point.position.clone())
     }
   })
+  const influenceWeights = buildLatticeInfluenceWeights(
+    latticeState,
+    pointStartPositions,
+    getCurrentLatticeInfluenceSettings(),
+  )
 
   latticeTransformDragState = {
     anchorStartMatrix,
     anchorStartInverse,
     pointStartPositions,
+    allPointStartPositions,
+    influenceWeights,
   }
 }
 
@@ -1970,17 +2529,62 @@ function updateLatticeTransformDrag(): void {
   }
 
   latticeTransformAnchor.updateMatrixWorld(true)
-  for (const [index, startPosition] of latticeTransformDragState.pointStartPositions) {
-    const point = latticeState.points[index]
-    if (!point) {
+  for (const point of latticeState.points) {
+    const startPosition = latticeTransformDragState.allPointStartPositions.get(point.index)
+    if (!startPosition) {
+      continue
+    }
+    const influence = latticeTransformDragState.influenceWeights.get(point.index) ?? 0
+    if (influence <= 0) {
+      point.position.copy(startPosition)
       continue
     }
 
-    point.position.copy(startPosition).applyMatrix4(latticeTransformDragState.anchorStartInverse).applyMatrix4(latticeTransformAnchor.matrixWorld)
+    const transformedPosition = startPosition
+      .clone()
+      .applyMatrix4(latticeTransformDragState.anchorStartInverse)
+      .applyMatrix4(latticeTransformAnchor.matrixWorld)
+    point.position.copy(startPosition).lerp(transformedPosition, influence)
   }
 
   refreshLatticeVisuals(false)
   rebuildCurrentDeformedGeometry()
+}
+
+function buildLatticeInfluenceWeights(
+  state: LatticeState,
+  selectedStartPositions: ReadonlyMap<number, THREE.Vector3>,
+  settings: BatwingLatticeInfluenceSettings,
+): Map<number, number> {
+  const weights = new Map<number, number>()
+  if (selectedStartPositions.size === 0) {
+    return weights
+  }
+
+  const selectedPoints = [...selectedStartPositions.values()]
+  const radius = Math.max(settings.falloffRadius, 0)
+  const strength = clampNumber(settings.falloffStrength, 0, 1)
+  for (const point of state.points) {
+    if (selectedStartPositions.has(point.index)) {
+      weights.set(point.index, 1)
+      continue
+    }
+
+    if (radius <= 0 || strength <= 0) {
+      weights.set(point.index, 0)
+      continue
+    }
+
+    const nearestDistance = selectedPoints.reduce(
+      (nearest, selectedPoint) => Math.min(nearest, selectedPoint.distanceTo(point.position)),
+      Number.POSITIVE_INFINITY,
+    )
+    const normalizedDistance = clampNumber(nearestDistance / radius, 0, 1)
+    const falloff = 1 - normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance)
+    weights.set(point.index, clampNumber(falloff * strength, 0, 1))
+  }
+
+  return weights
 }
 
 function finishLatticeTransformDrag(): void {
@@ -2149,6 +2753,192 @@ function applyLatticeDeformation(quadMesh: QuadMeshData): QuadMeshData {
     vertices: quadMesh.vertices.map((vertex) => sampleLatticeDeformation(vertex)),
     quadFaces: quadMesh.quadFaces,
   }
+}
+
+function applyTargetSurfaceMapping(
+  quadMesh: QuadMeshData,
+  settings: BatwingTargetSurfaceSettings,
+): QuadMeshData {
+  if (!loadedTargetSurface || loadedTargetSurface.triangles.length === 0) {
+    return quadMesh
+  }
+
+  const sourceBounds = computeQuadMeshBounds(quadMesh)
+  const sourceSize = sourceBounds.getSize(new THREE.Vector3())
+  const sourceCenter = sourceBounds.getCenter(new THREE.Vector3())
+  const targetCenter = loadedTargetSurface.bounds.getCenter(new THREE.Vector3())
+  const targetScale = Math.max(settings.targetScale, 0.01)
+  const blend = clampNumber(settings.blend, 0, 1)
+  const offset = settings.offset
+  const scaledTriangles = loadedTargetSurface.triangles.map(([a, b, c]) => [
+    a.clone().sub(targetCenter).multiplyScalar(targetScale),
+    b.clone().sub(targetCenter).multiplyScalar(targetScale),
+    c.clone().sub(targetCenter).multiplyScalar(targetScale),
+  ] as [THREE.Vector3, THREE.Vector3, THREE.Vector3])
+
+  const vertices = quadMesh.vertices.map((vertex) => {
+    const normalized = new THREE.Vector3(
+      Math.abs(sourceSize.x) <= SCALE_EPSILON ? 0 : (vertex.x - sourceCenter.x) / Math.max(sourceSize.x / 2, SCALE_EPSILON),
+      Math.abs(sourceSize.y) <= SCALE_EPSILON ? 0 : (vertex.y - sourceCenter.y) / Math.max(sourceSize.y / 2, SCALE_EPSILON),
+      Math.abs(sourceSize.z) <= SCALE_EPSILON ? 0 : (vertex.z - sourceCenter.z) / Math.max(sourceSize.z / 2, SCALE_EPSILON),
+    )
+    const guessPoint = new THREE.Vector3(
+      normalized.x * targetScale * BATWING_BOX_DIMENSIONS.width,
+      normalized.y * targetScale * BATWING_BOX_DIMENSIONS.height,
+      normalized.z * targetScale * BATWING_BOX_DIMENSIONS.depth,
+    )
+    const closest = getClosestPointOnTriangleSet(guessPoint, scaledTriangles)
+    const target = closest.position
+    const blended = vertex.clone().lerp(target, blend)
+    const normalDir = closest.normal.clone()
+    if (!Number.isFinite(normalDir.lengthSq()) || normalDir.lengthSq() <= 1e-12) {
+      return blended
+    }
+    return blended.addScaledVector(normalDir, offset)
+  })
+
+  return {
+    vertices,
+    quadFaces: quadMesh.quadFaces,
+  }
+}
+
+function getClosestPointOnTriangleSet(
+  point: THREE.Vector3,
+  triangles: ReadonlyArray<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>,
+): { position: THREE.Vector3; normal: THREE.Vector3 } {
+  let bestDistanceSquared = Number.POSITIVE_INFINITY
+  let bestPoint = point.clone()
+  let bestNormal = new THREE.Vector3(0, 1, 0)
+  const tempClosest = new THREE.Vector3()
+  const tempNormal = new THREE.Vector3()
+  const tempTriangle = new THREE.Triangle()
+
+  for (const [a, b, c] of triangles) {
+    THREE.Triangle.getNormal(a, b, c, tempNormal)
+    tempTriangle.set(a, b, c)
+    tempTriangle.closestPointToPoint(point, tempClosest)
+    const distanceSquared = tempClosest.distanceToSquared(point)
+    if (distanceSquared < bestDistanceSquared) {
+      bestDistanceSquared = distanceSquared
+      bestPoint = tempClosest.clone()
+      bestNormal = tempNormal.clone()
+    }
+  }
+
+  if (bestNormal.lengthSq() <= 1e-12) {
+    bestNormal.set(0, 1, 0)
+  } else {
+    bestNormal.normalize()
+  }
+  return { position: bestPoint, normal: bestNormal }
+}
+
+async function loadTargetSurfaceFromInput(): Promise<void> {
+  const file = targetSurfaceFileInput.files?.[0]
+  if (!file) {
+    return
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  if (extension !== 'obj' && extension !== 'stl') {
+    return
+  }
+
+  const fileText = extension === 'obj' ? await file.text() : null
+  const fileBuffer = extension === 'stl' ? await file.arrayBuffer() : null
+  const geometry = extension === 'obj' ? parseObjGeometry(fileText ?? '') : parseStlGeometry(fileBuffer ?? new ArrayBuffer(0))
+  if (!geometry) {
+    return
+  }
+
+  geometry.computeBoundingBox()
+  const bounds = geometry.boundingBox?.clone() ?? new THREE.Box3()
+  const points = extractGeometryPoints(geometry)
+  const triangles = extractGeometryTriangles(geometry)
+  loadedTargetSurface = {
+    name: file.name,
+    points,
+    triangles,
+    bounds,
+  }
+  geometry.dispose()
+  rebuildBatwing()
+}
+
+function parseObjGeometry(source: string): THREE.BufferGeometry | null {
+  const object = new OBJLoader().parse(source)
+  const geometries: THREE.BufferGeometry[] = []
+  object.traverse((child) => {
+    const meshLike = child as THREE.Object3D & { geometry?: THREE.BufferGeometry }
+    if (meshLike.geometry) {
+      geometries.push(meshLike.geometry)
+    }
+  })
+  if (geometries.length === 0) {
+    return null
+  }
+  return mergeBufferGeometries(geometries)
+}
+
+function parseStlGeometry(buffer: ArrayBuffer): THREE.BufferGeometry | null {
+  if (buffer.byteLength === 0) {
+    return null
+  }
+  const geometry = new STLLoader().parse(buffer)
+  return geometry
+}
+
+function extractGeometryPoints(geometry: THREE.BufferGeometry): THREE.Vector3[] {
+  const position = geometry.getAttribute('position')
+  const points: THREE.Vector3[] = []
+  for (let index = 0; index < position.count; index += 1) {
+    points.push(new THREE.Vector3(position.getX(index), position.getY(index), position.getZ(index)))
+  }
+  return points
+}
+
+function extractGeometryTriangles(
+  geometry: THREE.BufferGeometry,
+): Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]> {
+  const position = geometry.getAttribute('position')
+  const triangles: Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]> = []
+  const index = geometry.getIndex()
+  if (index) {
+    for (let i = 0; i < index.count; i += 3) {
+      const aIndex = index.getX(i)
+      const bIndex = index.getX(i + 1)
+      const cIndex = index.getX(i + 2)
+      triangles.push([
+        new THREE.Vector3(position.getX(aIndex), position.getY(aIndex), position.getZ(aIndex)),
+        new THREE.Vector3(position.getX(bIndex), position.getY(bIndex), position.getZ(bIndex)),
+        new THREE.Vector3(position.getX(cIndex), position.getY(cIndex), position.getZ(cIndex)),
+      ])
+    }
+    return triangles
+  }
+
+  for (let i = 0; i + 2 < position.count; i += 3) {
+    triangles.push([
+      new THREE.Vector3(position.getX(i), position.getY(i), position.getZ(i)),
+      new THREE.Vector3(position.getX(i + 1), position.getY(i + 1), position.getZ(i + 1)),
+      new THREE.Vector3(position.getX(i + 2), position.getY(i + 2), position.getZ(i + 2)),
+    ])
+  }
+  return triangles
+}
+
+function mergeBufferGeometries(geometries: readonly THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const mergedPositions: number[] = []
+  for (const geometry of geometries) {
+    const position = geometry.getAttribute('position')
+    for (let index = 0; index < position.count; index += 1) {
+      mergedPositions.push(position.getX(index), position.getY(index), position.getZ(index))
+    }
+  }
+  const mergedGeometry = new THREE.BufferGeometry()
+  mergedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(mergedPositions, 3))
+  return mergedGeometry
 }
 
 function sampleLatticeDeformation(position: THREE.Vector3): THREE.Vector3 {
@@ -2745,8 +3535,9 @@ function buildSubdividedWeldedArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
-  const weldedMesh = buildWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings)
+  const weldedMesh = buildWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings)
   const thickenedMesh = createThickenedQuadMesh(
     weldedMesh,
     arraySettings.thickness,
@@ -2760,9 +3551,10 @@ function buildWeldedArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   return weldQuadMeshByPositionPreservingFaceDirections(
-    buildCheckerboardArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings),
+    buildCheckerboardArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings),
   )
 }
 
@@ -2771,20 +3563,24 @@ function buildCheckerboardArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   const baseMesh = buildTpmsQuadMeshData(settings, geometryType, batwingFamily)
   const vertices: THREE.Vector3[] = []
   const quadFaces: QuadFace[] = []
+  const symmetryTransforms = buildSymmetryTransforms(symmetrySettings)
 
   forEachArrayOffset(arraySettings, (offset, _instanceIndex, lengthIndex, widthIndex, heightIndex) => {
-    const vertexOffset = vertices.length
-    for (const vertex of baseMesh.vertices) {
-      vertices.push(vertex.clone().add(offset))
-    }
+    for (const transform of symmetryTransforms) {
+      const vertexOffset = vertices.length
+      for (const vertex of baseMesh.vertices) {
+        vertices.push(applySymmetryTransform(vertex, transform).add(offset))
+      }
 
-    const flipWinding = shouldFlipArrayCellWinding(lengthIndex, widthIndex, heightIndex)
-    for (const baseFace of baseMesh.quadFaces) {
-      quadFaces.push(offsetQuadFace(flipWinding ? reverseQuadFace(baseFace) : baseFace, vertexOffset))
+      const flipWinding = shouldFlipArrayCellWinding(lengthIndex, widthIndex, heightIndex)
+      for (const baseFace of baseMesh.quadFaces) {
+        quadFaces.push(offsetQuadFace(flipWinding ? reverseQuadFace(baseFace) : baseFace, vertexOffset))
+      }
     }
   })
 
@@ -2792,6 +3588,33 @@ function buildCheckerboardArrayQuadMesh(
     vertices,
     quadFaces,
   }
+}
+
+function buildSymmetryTransforms(
+  settings: BatwingSymmetrySettings,
+): Array<{ angle: number; screwYOffset: number; glideX: number }> {
+  const copies = Math.max(1, Math.round(settings.rotationalCopies))
+  const transforms: Array<{ angle: number; screwYOffset: number; glideX: number }> = []
+  for (let index = 0; index < copies; index += 1) {
+    transforms.push({
+      angle: (Math.PI * 2 * index) / copies,
+      screwYOffset: settings.screwHeightPerCopy * index,
+      glideX: index % 2 === 0 ? 0 : settings.glideOffsetX,
+    })
+  }
+  return transforms
+}
+
+function applySymmetryTransform(
+  vertex: THREE.Vector3,
+  transform: { angle: number; screwYOffset: number; glideX: number },
+): THREE.Vector3 {
+  const sin = Math.sin(transform.angle)
+  const cos = Math.cos(transform.angle)
+  const x = vertex.x * cos - vertex.z * sin + transform.glideX
+  const z = vertex.x * sin + vertex.z * cos
+  const y = vertex.y + transform.screwYOffset
+  return new THREE.Vector3(x, y, z)
 }
 
 function shouldFlipArrayCellWinding(
@@ -3713,6 +4536,21 @@ function updatePanelSectionControls(): void {
   })
 }
 
+function enablePerSectionScrolling(): void {
+  const contents = app.querySelectorAll<HTMLElement>('.panel-section-content')
+  contents.forEach((content) => {
+    content.addEventListener(
+      'wheel',
+      (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        content.scrollTop += event.deltaY
+      },
+      { passive: false },
+    )
+  })
+}
+
 function onResize(): void {
   const width = window.innerWidth
   const height = window.innerHeight
@@ -3763,8 +4601,23 @@ for (const binding of arraySliderBindings) {
   updateRangeProgress(binding.slider)
 }
 
+for (const binding of symmetrySliderBindings) {
+  bindSymmetrySlider(binding)
+  updateRangeProgress(binding.slider)
+}
+
 for (const binding of latticeSliderBindings) {
   bindLatticeSlider(binding)
+  updateRangeProgress(binding.slider)
+}
+
+for (const binding of latticeInfluenceSliderBindings) {
+  bindLatticeInfluenceSlider(binding)
+  updateRangeProgress(binding.slider)
+}
+
+for (const binding of targetSurfaceSliderBindings) {
+  bindTargetSurfaceSlider(binding)
   updateRangeProgress(binding.slider)
 }
 
@@ -3799,6 +4652,14 @@ batwingFamilySelect.addEventListener('change', () => {
   rebuildBatwing()
   commitHistoryCheckpoint(previousState)
   batwingFamilyBeforeEdit = null
+})
+loadTargetSurfaceButton.addEventListener('click', () => {
+  void loadTargetSurfaceFromInput()
+})
+clearTargetSurfaceButton.addEventListener('click', () => {
+  loadedTargetSurface = null
+  targetSurfaceFileInput.value = ''
+  rebuildBatwing()
 })
 
 latticeResetButton.addEventListener('click', () => {
@@ -3910,7 +4771,18 @@ uiHandleTop.addEventListener('pointercancel', (event) => {
   uiHandleTop.releasePointerCapture(event.pointerId)
 })
 
+uiPanel.addEventListener(
+  'pointermove',
+  (event) => {
+    if (event.pointerType === 'touch') {
+      event.stopPropagation()
+    }
+  },
+  { passive: true },
+)
+
 updatePanelSectionControls()
+enablePerSectionScrolling()
 updateGeometryDataset()
 onResize()
 window.addEventListener('resize', onResize)

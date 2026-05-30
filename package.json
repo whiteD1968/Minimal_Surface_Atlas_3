@@ -1,6 +1,6 @@
 {
-  "name": "260428_batwinggyroid",
-  "description": "Interactive Three.js batwing mesh generator.",
+  "name": "minimal_surface_atlas",
+  "description": "Interactive Three.js minimal surface atlas generator.",
   "private": true,
   "version": "0.0.0",
   "type": "module",
