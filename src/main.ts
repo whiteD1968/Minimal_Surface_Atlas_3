@@ -599,6 +599,25 @@ app.innerHTML = `
               <button id="targetRotateModeButton" class="pill-button" type="button">Target Rotate</button>
               <button id="targetScaleModeButton" class="pill-button" type="button">Target Scale</button>
             </div>
+            <label class="control">
+              <div class="control-row">
+                <span>Target Rotation X/Y/Z</span>
+              </div>
+              <div class="control-grid-2">
+                <input id="target-rot-x-value" class="value-pill value-input" type="number" inputmode="decimal" step="0.1" value="0.0" />
+                <input id="target-rot-y-value" class="value-pill value-input" type="number" inputmode="decimal" step="0.1" value="0.0" />
+                <input id="target-rot-z-value" class="value-pill value-input" type="number" inputmode="decimal" step="0.1" value="0.0" />
+              </div>
+            </label>
+            <label class="control">
+              <div class="control-row">
+                <span>Target Scale X/Y/Z</span>
+              </div>
+              <div class="control-row">
+                <span>Uniform Scale</span>
+                <input id="target-scale-uniform-value" class="value-pill value-input" type="number" inputmode="decimal" min="0.001" step="0.01" value="1.00" />
+              </div>
+            </label>
             <label class="control" for="targetBlendSlider">
               <div class="control-row">
                 <span>Surface Blend</span>
@@ -837,6 +856,10 @@ const unmapTargetButton = requireElement<HTMLButtonElement>('#unmapTargetButton'
 const targetMoveModeButton = requireElement<HTMLButtonElement>('#targetMoveModeButton')
 const targetRotateModeButton = requireElement<HTMLButtonElement>('#targetRotateModeButton')
 const targetScaleModeButton = requireElement<HTMLButtonElement>('#targetScaleModeButton')
+const targetRotXInput = requireElement<HTMLInputElement>('#target-rot-x-value')
+const targetRotYInput = requireElement<HTMLInputElement>('#target-rot-y-value')
+const targetRotZInput = requireElement<HTMLInputElement>('#target-rot-z-value')
+const targetScaleUniformInput = requireElement<HTMLInputElement>('#target-scale-uniform-value')
 
 const sliderBindings: SliderBinding[] = [
   {
@@ -1139,6 +1162,9 @@ targetTransformControl.addEventListener('dragging-changed', (event) => {
   if (!event.value && targetMappingEnabled) {
     rebuildBatwing()
   }
+})
+targetTransformControl.addEventListener('objectChange', () => {
+  syncTargetTransformInputsFromMesh()
 })
 scene.add(targetTransformHelper)
 
@@ -3038,15 +3064,33 @@ function applyTargetSurfaceMapping(
   const targetScale = Math.max(settings.targetScale, 0.01)
   const blend = clampNumber(settings.blend, 0, 1)
   const offset = settings.offset
+  const sourceBounds = computeQuadMeshBounds(quadMesh)
+  const sourceSize = sourceBounds.getSize(new THREE.Vector3())
 
   const transformedTriangles = loadedTargetSurface.triangles.map(([a, b, c]) => [
     a.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
     b.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
     c.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
   ] as [THREE.Vector3, THREE.Vector3, THREE.Vector3])
+  const targetBounds = new THREE.Box3()
+  for (const [a, b, c] of transformedTriangles) {
+    targetBounds.expandByPoint(a)
+    targetBounds.expandByPoint(b)
+    targetBounds.expandByPoint(c)
+  }
+  const targetSize = targetBounds.getSize(new THREE.Vector3())
+  const targetMin = targetBounds.min
 
   const vertices = quadMesh.vertices.map((vertex) => {
-    const closest = getClosestPointOnTriangleSet(vertex, transformedTriangles)
+    const nx = Math.abs(sourceSize.x) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.x - sourceBounds.min.x) / sourceSize.x, 0, 1)
+    const ny = Math.abs(sourceSize.y) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.y - sourceBounds.min.y) / sourceSize.y, 0, 1)
+    const nz = Math.abs(sourceSize.z) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.z - sourceBounds.min.z) / sourceSize.z, 0, 1)
+    const seedPoint = new THREE.Vector3(
+      targetMin.x + targetSize.x * nx,
+      targetMin.y + targetSize.y * ny,
+      targetMin.z + targetSize.z * nz,
+    )
+    const closest = getClosestPointOnTriangleSet(seedPoint, transformedTriangles)
     const target = closest.position
     const blended = vertex.clone().lerp(target, blend)
     const normalDir = closest.normal.clone()
@@ -3113,6 +3157,11 @@ async function loadTargetSurfaceFromInput(): Promise<void> {
 
   geometry.computeVertexNormals()
   geometry.computeBoundingBox()
+  // Center target geometry so transform gizmo pivots at geometric center.
+  const initialBounds = geometry.boundingBox?.clone() ?? new THREE.Box3()
+  const initialCenter = initialBounds.getCenter(new THREE.Vector3())
+  geometry.translate(-initialCenter.x, -initialCenter.y, -initialCenter.z)
+  geometry.computeBoundingBox()
   const bounds = geometry.boundingBox?.clone() ?? new THREE.Box3()
   const triangles = extractGeometryTriangles(geometry)
   const previewMesh = new THREE.Mesh(
@@ -3148,9 +3197,67 @@ async function loadTargetSurfaceFromInput(): Promise<void> {
   targetTransformHelper.visible = true
   targetTransformControl.setMode('translate')
   snapTargetToBatwingBounds()
+  syncTargetTransformInputsFromMesh()
   targetMappingEnabled = false
   geometry.dispose()
   rebuildBatwing()
+}
+
+function radiansToDegrees(value: number): number {
+  return (value * 180) / Math.PI
+}
+
+function degreesToRadians(value: number): number {
+  return (value * Math.PI) / 180
+}
+
+function syncTargetTransformInputsFromMesh(): void {
+  const mesh = loadedTargetSurface?.previewMesh
+  if (!mesh) {
+    targetRotXInput.value = '0.0'
+    targetRotYInput.value = '0.0'
+    targetRotZInput.value = '0.0'
+    targetScaleUniformInput.value = '1.00'
+    return
+  }
+
+  // Enforce uniform scale if gizmo introduced non-uniform values.
+  const uniformScale = (mesh.scale.x + mesh.scale.y + mesh.scale.z) / 3
+  mesh.scale.setScalar(uniformScale)
+
+  targetRotXInput.value = radiansToDegrees(mesh.rotation.x).toFixed(1)
+  targetRotYInput.value = radiansToDegrees(mesh.rotation.y).toFixed(1)
+  targetRotZInput.value = radiansToDegrees(mesh.rotation.z).toFixed(1)
+  targetScaleUniformInput.value = uniformScale.toFixed(2)
+}
+
+function applyTargetTransformFromInputs(): void {
+  const mesh = loadedTargetSurface?.previewMesh
+  if (!mesh) {
+    return
+  }
+
+  const rotX = Number.parseFloat(targetRotXInput.value)
+  const rotY = Number.parseFloat(targetRotYInput.value)
+  const rotZ = Number.parseFloat(targetRotZInput.value)
+  const uniformScale = Number.parseFloat(targetScaleUniformInput.value)
+  if (Number.isFinite(rotX)) {
+    mesh.rotation.x = degreesToRadians(rotX)
+  }
+  if (Number.isFinite(rotY)) {
+    mesh.rotation.y = degreesToRadians(rotY)
+  }
+  if (Number.isFinite(rotZ)) {
+    mesh.rotation.z = degreesToRadians(rotZ)
+  }
+  if (Number.isFinite(uniformScale) && uniformScale > 1e-4) {
+    mesh.scale.setScalar(uniformScale)
+  }
+  mesh.updateMatrixWorld(true)
+  syncTargetTransformInputsFromMesh()
+  if (targetMappingEnabled) {
+    rebuildBatwing()
+  }
 }
 
 function snapTargetToBatwingBounds(): void {
@@ -3172,6 +3279,7 @@ function snapTargetToBatwingBounds(): void {
   loadedTargetSurface.previewMesh.rotation.set(0, 0, 0)
   loadedTargetSurface.previewMesh.scale.setScalar(clampNumber(fitScale, 1e-4, 1e4))
   loadedTargetSurface.previewMesh.updateMatrixWorld(true)
+  syncTargetTransformInputsFromMesh()
   if (targetMappingEnabled) {
     rebuildBatwing()
   }
@@ -5107,6 +5215,7 @@ clearTargetSurfaceButton.addEventListener('click', () => {
   targetTransformControl.enabled = false
   targetTransformHelper.visible = false
   targetSurfaceFileInput.value = ''
+  syncTargetTransformInputsFromMesh()
   rebuildBatwing()
 })
 snapTargetToBatwingButton.addEventListener('click', () => {
@@ -5141,6 +5250,19 @@ targetScaleModeButton.addEventListener('click', () => {
   }
   targetTransformControl.setMode('scale')
 })
+
+for (const input of [targetRotXInput, targetRotYInput, targetRotZInput, targetScaleUniformInput]) {
+  input.addEventListener('change', () => {
+    applyTargetTransformFromInputs()
+  })
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      applyTargetTransformFromInputs()
+      input.blur()
+    }
+  })
+}
 
 latticeResetButton.addEventListener('click', () => {
   const previousState = captureAppState()
