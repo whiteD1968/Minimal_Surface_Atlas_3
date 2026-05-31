@@ -95,6 +95,7 @@ type BatwingLatticeInfluenceSettings = {
 }
 
 type BatwingTargetSurfaceSettings = {
+  offsetMode: 'two-sided' | 'one-sided'
   blend: number
   offset: number
   targetScale: number
@@ -122,7 +123,7 @@ type LatticeInfluenceSliderBinding = {
   valueInput: HTMLInputElement
 }
 
-type TargetSurfaceControlKey = keyof BatwingTargetSurfaceSettings
+type TargetSurfaceControlKey = Exclude<keyof BatwingTargetSurfaceSettings, 'offsetMode'>
 
 type TargetSurfaceSliderBinding = {
   key: TargetSurfaceControlKey
@@ -330,6 +331,7 @@ const DEFAULT_LATTICE_INFLUENCE_SETTINGS: BatwingLatticeInfluenceSettings = {
   falloffStrength: 1,
 }
 const DEFAULT_TARGET_SURFACE_SETTINGS: BatwingTargetSurfaceSettings = {
+  offsetMode: 'two-sided',
   blend: 1,
   offset: 0,
   targetScale: 1,
@@ -599,6 +601,15 @@ app.innerHTML = `
               <button id="targetRotateModeButton" class="pill-button" type="button">Target Rotate</button>
               <button id="targetScaleModeButton" class="pill-button" type="button">Target Scale</button>
             </div>
+            <label class="control" for="targetOffsetModeSelect">
+              <div class="control-row">
+                <span>Surface Offset Mode</span>
+                <select id="targetOffsetModeSelect" class="value-pill value-select">
+                  <option value="two-sided">Two-sided</option>
+                  <option value="one-sided">One-sided</option>
+                </select>
+              </div>
+            </label>
             <label class="control">
               <div class="control-row">
                 <span>Target Rotation X/Y/Z</span>
@@ -856,6 +867,7 @@ const unmapTargetButton = requireElement<HTMLButtonElement>('#unmapTargetButton'
 const targetMoveModeButton = requireElement<HTMLButtonElement>('#targetMoveModeButton')
 const targetRotateModeButton = requireElement<HTMLButtonElement>('#targetRotateModeButton')
 const targetScaleModeButton = requireElement<HTMLButtonElement>('#targetScaleModeButton')
+const targetOffsetModeSelect = requireElement<HTMLSelectElement>('#targetOffsetModeSelect')
 const targetRotXInput = requireElement<HTMLInputElement>('#target-rot-x-value')
 const targetRotYInput = requireElement<HTMLInputElement>('#target-rot-y-value')
 const targetRotZInput = requireElement<HTMLInputElement>('#target-rot-z-value')
@@ -1554,13 +1566,21 @@ function getCurrentLatticeInfluenceSettings(): BatwingLatticeInfluenceSettings {
 }
 
 function getCurrentTargetSurfaceSettings(): BatwingTargetSurfaceSettings {
-  return targetSurfaceSliderBindings.reduce<BatwingTargetSurfaceSettings>(
+  const sliderSettings = targetSurfaceSliderBindings.reduce<Omit<BatwingTargetSurfaceSettings, 'offsetMode'>>(
     (settings, binding) => {
       settings[binding.key] = readTargetSurfaceSliderNumber(binding)
       return settings
     },
-    { ...DEFAULT_TARGET_SURFACE_SETTINGS },
+    {
+      blend: DEFAULT_TARGET_SURFACE_SETTINGS.blend,
+      offset: DEFAULT_TARGET_SURFACE_SETTINGS.offset,
+      targetScale: DEFAULT_TARGET_SURFACE_SETTINGS.targetScale,
+    },
   )
+  return {
+    offsetMode: targetOffsetModeSelect.value === 'one-sided' ? 'one-sided' : 'two-sided',
+    ...sliderSettings,
+  }
 }
 
 function cloneSettings(settings: BatwingSettings): BatwingSettings {
@@ -1619,6 +1639,7 @@ function cloneLatticeInfluenceSettings(
 
 function cloneTargetSurfaceSettings(settings: BatwingTargetSurfaceSettings): BatwingTargetSurfaceSettings {
   return {
+    offsetMode: settings.offsetMode,
     blend: settings.blend,
     offset: settings.offset,
     targetScale: settings.targetScale,
@@ -1727,6 +1748,7 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.latticeSettings.heightDivisions === b.latticeSettings.heightDivisions &&
     a.latticeInfluenceSettings.falloffRadius === b.latticeInfluenceSettings.falloffRadius &&
     a.latticeInfluenceSettings.falloffStrength === b.latticeInfluenceSettings.falloffStrength &&
+    a.targetSurfaceSettings.offsetMode === b.targetSurfaceSettings.offsetMode &&
     a.targetSurfaceSettings.blend === b.targetSurfaceSettings.blend &&
     a.targetSurfaceSettings.offset === b.targetSurfaceSettings.offset &&
     a.targetSurfaceSettings.targetScale === b.targetSurfaceSettings.targetScale &&
@@ -1932,6 +1954,7 @@ function applyLatticeInfluenceSettings(settings: BatwingLatticeInfluenceSettings
 }
 
 function applyTargetSurfaceSettings(settings: BatwingTargetSurfaceSettings): void {
+  targetOffsetModeSelect.value = settings.offsetMode
   for (const binding of targetSurfaceSliderBindings) {
     const nextValue = normalizeTargetSurfaceSliderValue(binding, settings[binding.key])
     binding.slider.value = `${nextValue}`
@@ -2338,16 +2361,21 @@ function rebuildBatwing(): void {
     batwingFamily,
     settings,
     arraySettings,
-    depthGradientSettings,
     symmetrySettings,
   )
   currentSourceQuadMesh = cloneQuadMeshData(sourceQuadMesh)
   rebuildLatticeFromCurrentSource()
-  const drapedQuadMesh = applyTargetSurfaceMapping(
+  const mappedQuadMesh = applyTargetSurfaceMapping(
     applyLatticeDeformation(sourceQuadMesh),
     getCurrentTargetSurfaceSettings(),
   )
-  const nextGeometrySet = buildGeometrySetFromQuadMesh(drapedQuadMesh, arraySettings)
+  const displayQuadMesh = buildFinalDisplayQuadMesh(
+    mappedQuadMesh,
+    arraySettings,
+    depthGradientSettings,
+    getCurrentTargetSurfaceSettings().offsetMode,
+  )
+  const nextGeometrySet = buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings)
 
   batwingMesh.geometry.dispose()
   batwingMesh.geometry = nextGeometrySet.meshGeometry
@@ -2369,11 +2397,18 @@ function rebuildCurrentDeformedGeometry(): void {
   }
 
   const arraySettings = getCurrentArraySettings()
-  const drapedQuadMesh = applyTargetSurfaceMapping(
+  const depthGradientSettings = getCurrentDepthGradientSettings()
+  const mappedQuadMesh = applyTargetSurfaceMapping(
     applyLatticeDeformation(sourceQuadMesh),
     getCurrentTargetSurfaceSettings(),
   )
-  const nextGeometrySet = buildGeometrySetFromQuadMesh(drapedQuadMesh, arraySettings)
+  const displayQuadMesh = buildFinalDisplayQuadMesh(
+    mappedQuadMesh,
+    arraySettings,
+    depthGradientSettings,
+    getCurrentTargetSurfaceSettings().offsetMode,
+  )
+  const nextGeometrySet = buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings)
   batwingMesh.geometry.dispose()
   batwingMesh.geometry = nextGeometrySet.meshGeometry
   wireOverlay.geometry.dispose()
@@ -2487,11 +2522,16 @@ function buildBatwingGeometrySet(
     batwingFamily,
     settings,
     arraySettings,
-    depthGradientSettings,
     symmetrySettings,
   )
   currentSourceQuadMesh = cloneQuadMeshData(quadMesh)
-  return buildGeometrySetFromQuadMesh(quadMesh, arraySettings)
+  const displayQuadMesh = buildFinalDisplayQuadMesh(
+    quadMesh,
+    arraySettings,
+    depthGradientSettings,
+    DEFAULT_TARGET_SURFACE_SETTINGS.offsetMode,
+  )
+  return buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings)
 }
 
 function buildGeometrySetFromQuadMesh(
@@ -3945,18 +3985,27 @@ function buildSubdividedWeldedArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
-  depthGradientSettings: BatwingDepthGradientSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   const weldedMesh = buildWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings)
-  const depthThicknessScaleMap = buildDepthGradientThicknessScaleMap(weldedMesh, depthGradientSettings)
+  return weldQuadMeshByPositionPreservingFaceDirections(subdivideCatmullClark(weldedMesh, arraySettings.subdivisions))
+}
+
+function buildFinalDisplayQuadMesh(
+  mappedQuadMesh: QuadMeshData,
+  arraySettings: BatwingArraySettings,
+  depthGradientSettings: BatwingDepthGradientSettings,
+  offsetMode: BatwingTargetSurfaceSettings['offsetMode'],
+): QuadMeshData {
+  const depthThicknessScaleMap = buildDepthGradientThicknessScaleMap(mappedQuadMesh, depthGradientSettings)
   const thickenedMesh = createThickenedQuadMesh(
-    weldedMesh,
+    mappedQuadMesh,
     arraySettings.thickness,
     buildArrayCenterThicknessNormalMap(arraySettings),
     depthThicknessScaleMap,
+    offsetMode,
   )
-  return weldQuadMeshByPositionPreservingFaceDirections(subdivideCatmullClark(thickenedMesh, arraySettings.subdivisions))
+  return weldQuadMeshByPositionPreservingFaceDirections(thickenedMesh)
 }
 
 function buildWeldedArrayQuadMesh(
@@ -4155,13 +4204,15 @@ function createThickenedQuadMesh(
   thickness: number,
   forcedThicknessNormalMap = new Map<string, THREE.Vector3>(),
   thicknessScaleMap = new Map<string, number>(),
+  offsetMode: BatwingTargetSurfaceSettings['offsetMode'] = 'two-sided',
 ): QuadMeshData {
   const safeThickness = clampNumber(thickness, 0, MAX_THICKNESS)
   if (safeThickness <= 0.0001) {
     return quadMesh
   }
 
-  const halfThickness = safeThickness / 2
+  const outwardThickness = offsetMode === 'one-sided' ? safeThickness : safeThickness / 2
+  const inwardThickness = offsetMode === 'one-sided' ? 0 : safeThickness / 2
   const vertexNormals = computeQuadMeshVertexNormals(quadMesh)
   for (let index = 0; index < quadMesh.vertices.length; index += 1) {
     const vertex = quadMesh.vertices[index]
@@ -4177,13 +4228,13 @@ function createThickenedQuadMesh(
   for (let index = 0; index < vertexCount; index += 1) {
     const vertex = quadMesh.vertices[index]
     const scale = clampNumber(thicknessScaleMap.get(getWeldKey(vertex.x, vertex.y, vertex.z)) ?? 1, 0.1, 4)
-    vertices.push(vertex.clone().addScaledVector(vertexNormals[index], halfThickness * scale))
+    vertices.push(vertex.clone().addScaledVector(vertexNormals[index], outwardThickness * scale))
   }
 
   for (let index = 0; index < vertexCount; index += 1) {
     const vertex = quadMesh.vertices[index]
     const scale = clampNumber(thicknessScaleMap.get(getWeldKey(vertex.x, vertex.y, vertex.z)) ?? 1, 0.1, 4)
-    vertices.push(vertex.clone().addScaledVector(vertexNormals[index], -halfThickness * scale))
+    vertices.push(vertex.clone().addScaledVector(vertexNormals[index], -inwardThickness * scale))
   }
 
   for (const [a, b, c, d] of quadMesh.quadFaces) {
@@ -5249,6 +5300,13 @@ targetScaleModeButton.addEventListener('click', () => {
     return
   }
   targetTransformControl.setMode('scale')
+})
+targetOffsetModeSelect.addEventListener('change', () => {
+  const previousState = captureAppState()
+  previousState.targetSurfaceSettings.offsetMode =
+    targetOffsetModeSelect.value === 'one-sided' ? 'two-sided' : 'one-sided'
+  rebuildBatwing()
+  commitHistoryCheckpoint(previousState)
 })
 
 for (const input of [targetRotXInput, targetRotYInput, targetRotZInput, targetScaleUniformInput]) {
