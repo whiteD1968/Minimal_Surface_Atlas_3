@@ -413,6 +413,7 @@ app.innerHTML = `
                 <span>Geometry</span>
                 <select id="geometryTypeSelect" class="value-pill value-select" aria-label="Geometry selection">
                   <option value="batwing">Batwing</option>
+                  <option value="scherks">Scherks</option>
                   <option value="schwarz-p">Schwarz P</option>
                   <option value="scherk-1">Scherk 1</option>
                   <option value="scherk-2">Scherk 2</option>
@@ -1873,7 +1874,13 @@ function applySettings(settings: BatwingSettings): void {
 
 function getCurrentGeometryType(): TpmsGeometryType {
   const value = geometryTypeSelect.value
-  if (value === 'schwarz-p' || value === 'scherk-1' || value === 'scherk-2' || value === 'neovius') {
+  if (
+    value === 'scherks' ||
+    value === 'schwarz-p' ||
+    value === 'scherk-1' ||
+    value === 'scherk-2' ||
+    value === 'neovius'
+  ) {
     return value
   }
   return 'batwing'
@@ -4041,7 +4048,12 @@ function buildCheckerboardArrayQuadMesh(
         vertices.push(vertex.clone().add(offset))
       }
 
-      const flipWinding = shouldFlipArrayCellWinding(lengthIndex, widthIndex, heightIndex)
+      const flipWinding = shouldFlipArrayCellWindingForGeometry(
+        geometryType,
+        lengthIndex,
+        widthIndex,
+        heightIndex,
+      )
       for (const baseFace of baseMesh.quadFaces) {
         quadFaces.push(offsetQuadFace(flipWinding ? reverseQuadFace(baseFace) : baseFace, vertexOffset))
       }
@@ -4180,6 +4192,19 @@ function shouldFlipArrayCellWinding(
   heightIndex: number,
 ): boolean {
   return (lengthIndex + widthIndex + heightIndex) % 2 === 1
+}
+
+function shouldFlipArrayCellWindingForGeometry(
+  geometryType: TpmsGeometryType,
+  lengthIndex: number,
+  widthIndex: number,
+  heightIndex: number,
+): boolean {
+  if (geometryType === 'scherks') {
+    return false
+  }
+
+  return shouldFlipArrayCellWinding(lengthIndex, widthIndex, heightIndex)
 }
 
 function reverseQuadFace([a, b, c, d]: QuadFace): QuadFace {

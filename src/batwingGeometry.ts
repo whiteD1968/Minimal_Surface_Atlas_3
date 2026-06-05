@@ -7,7 +7,7 @@ export interface BatwingSettings {
   t3: number
 }
 
-export type TpmsGeometryType = 'batwing' | 'schwarz-p' | 'scherk-1' | 'scherk-2' | 'neovius'
+export type TpmsGeometryType = 'batwing' | 'scherks' | 'schwarz-p' | 'scherk-1' | 'scherk-2' | 'neovius'
 export type BatwingFamilyType = 'classic' | 'mirror-x' | 'mirror-z' | 'mirror-xz' | 'checker'
 
 export type QuadFace = [number, number, number, number]
@@ -32,6 +32,174 @@ export const BATWING_BOX_DIMENSIONS = {
 
 const SOURCE_VERTEX_COUNT = 4
 const SOURCE_VERTEX_TOTAL = SOURCE_VERTEX_COUNT * 2
+
+const SCHERKS_VERTICES: Array<[number, number, number]> = [
+  [-0.900001, 0.9, 0.899998],
+  [-0.900001, 0.476557, 0.89275],
+  [0, 0.461471, 0.728282],
+  [0, 0.9, -0.000001],
+  [-1.799999, 0.9, 1.799997],
+  [-1.8, 0.554197, 1.030054],
+  [-0.900001, 0, 0.899998],
+  [0, 0, 0.899998],
+  [-1.8, 0, 0.899998],
+  [0.900001, 0.9, 0.899998],
+  [0.900001, 0.476557, 0.89275],
+  [1.8, 0.554197, 1.030054],
+  [1.799999, 0.9, 1.799997],
+  [0.900001, 0, 0.899998],
+  [1.8, 0, 0.899998],
+  [-0.900001, 0.9, -0.900001],
+  [0, 0.461471, -0.728285],
+  [-0.900001, 0.476557, -0.892752],
+  [-1.8, 0.554197, -1.030057],
+  [-1.799999, 0.9, -1.8],
+  [0, 0, -0.900001],
+  [-0.900001, 0, -0.900001],
+  [-1.8, 0, -0.900001],
+  [0.900001, 0.9, -0.900001],
+  [0.900001, 0.476557, -0.892752],
+  [1.799999, 0.9, -1.8],
+  [1.8, 0.554197, -1.030057],
+  [0.900001, 0, -0.900001],
+  [1.8, 0, -0.900001],
+  [0.728283, 1.338529, -0.000001],
+  [0.892751, 1.323443, -0.900001],
+  [1.030055, 1.245803, -1.8],
+  [0.899999, 1.8, -0.000001],
+  [0.899999, 1.8, -0.900001],
+  [0.899999, 1.8, -1.8],
+  [0.892751, 1.323443, 0.900001],
+  [1.030055, 1.245803, 1.8],
+  [0.899999, 1.8, 0.900001],
+  [0.899999, 1.8, 1.8],
+  [-0.892751, 1.323443, -0.900001],
+  [-0.728283, 1.338529, -0.000001],
+  [-1.030055, 1.245803, -1.8],
+  [-0.899999, 1.8, -0.900001],
+  [-0.899999, 1.8, -0.000001],
+  [-0.899999, 1.8, -1.8],
+  [-0.892751, 1.323443, 0.900001],
+  [-1.030055, 1.245803, 1.8],
+  [-0.899999, 1.8, 0.900001],
+  [-0.899999, 1.8, 1.8],
+  [-0.900001, -0.9, -0.899998],
+  [-0.900001, -0.476557, -0.89275],
+  [0, -0.461471, -0.728282],
+  [0, -0.9, 0.000001],
+  [-1.799999, -0.9, -1.799997],
+  [-1.8, -0.554197, -1.030054],
+  [-0.900001, 0, -0.899998],
+  [0, 0, -0.899998],
+  [-1.8, 0, -0.899998],
+  [0.900001, -0.9, -0.899998],
+  [0.900001, -0.476557, -0.89275],
+  [1.8, -0.554197, -1.030054],
+  [1.799999, -0.9, -1.799997],
+  [0.900001, 0, -0.899998],
+  [1.8, 0, -0.899998],
+  [-0.900001, -0.9, 0.900001],
+  [0, -0.461471, 0.728285],
+  [-0.900001, -0.476557, 0.892752],
+  [-1.8, -0.554197, 1.030057],
+  [-1.799999, -0.9, 1.8],
+  [0, 0, 0.900001],
+  [-0.900001, 0, 0.900001],
+  [-1.8, 0, 0.900001],
+  [0.900001, -0.9, 0.900001],
+  [0.900001, -0.476557, 0.892752],
+  [1.799999, -0.9, 1.8],
+  [1.8, -0.554197, 1.030057],
+  [0.900001, 0, 0.900001],
+  [1.8, 0, 0.900001],
+  [0.728283, -1.338529, 0.000001],
+  [0.892751, -1.323443, 0.900001],
+  [1.030055, -1.245803, 1.8],
+  [0.899999, -1.8, 0.000001],
+  [0.899999, -1.8, 0.900001],
+  [0.899999, -1.8, 1.8],
+  [0.892751, -1.323443, -0.900001],
+  [1.030055, -1.245803, -1.8],
+  [0.899999, -1.8, -0.900001],
+  [0.899999, -1.8, -1.8],
+  [-0.892751, -1.323443, 0.900001],
+  [-0.728283, -1.338529, 0.000001],
+  [-1.030055, -1.245803, 1.8],
+  [-0.899999, -1.8, 0.900001],
+  [-0.899999, -1.8, 0.000001],
+  [-0.899999, -1.8, 1.8],
+  [-0.892751, -1.323443, -0.900001],
+  [-1.030055, -1.245803, -1.8],
+  [-0.899999, -1.8, -0.900001],
+  [-0.899999, -1.8, -1.8],
+]
+
+const SCHERKS_QUAD_FACES: QuadFace[] = [
+  [0, 1, 2, 3],
+  [1, 0, 4, 5],
+  [1, 6, 7, 2],
+  [8, 6, 1, 5],
+  [9, 3, 2, 10],
+  [10, 11, 12, 9],
+  [10, 2, 7, 13],
+  [14, 11, 10, 13],
+  [15, 3, 16, 17],
+  [17, 18, 19, 15],
+  [17, 16, 20, 21],
+  [22, 18, 17, 21],
+  [23, 24, 16, 3],
+  [24, 23, 25, 26],
+  [24, 27, 20, 16],
+  [28, 27, 24, 26],
+  [23, 3, 29, 30],
+  [30, 31, 25, 23],
+  [30, 29, 32, 33],
+  [34, 31, 30, 33],
+  [9, 35, 29, 3],
+  [35, 9, 12, 36],
+  [35, 37, 32, 29],
+  [38, 37, 35, 36],
+  [15, 39, 40, 3],
+  [39, 15, 19, 41],
+  [39, 42, 43, 40],
+  [44, 42, 39, 41],
+  [0, 3, 40, 45],
+  [45, 46, 4, 0],
+  [45, 40, 43, 47],
+  [48, 46, 45, 47],
+  [49, 50, 51, 52],
+  [50, 49, 53, 54],
+  [50, 55, 56, 51],
+  [57, 55, 50, 54],
+  [58, 52, 51, 59],
+  [59, 60, 61, 58],
+  [59, 51, 56, 62],
+  [63, 60, 59, 62],
+  [64, 52, 65, 66],
+  [66, 67, 68, 64],
+  [66, 65, 69, 70],
+  [71, 67, 66, 70],
+  [72, 73, 65, 52],
+  [73, 72, 74, 75],
+  [73, 76, 69, 65],
+  [77, 76, 73, 75],
+  [72, 52, 78, 79],
+  [79, 80, 74, 72],
+  [79, 78, 81, 82],
+  [83, 80, 79, 82],
+  [58, 84, 78, 52],
+  [84, 58, 61, 85],
+  [84, 86, 81, 78],
+  [87, 86, 84, 85],
+  [64, 88, 89, 52],
+  [88, 64, 68, 90],
+  [88, 91, 92, 89],
+  [93, 91, 88, 90],
+  [49, 52, 89, 94],
+  [94, 95, 53, 49],
+  [94, 89, 92, 96],
+  [97, 95, 94, 96],
+]
 
 export function buildBatwingGeometry(settings: BatwingSettings): THREE.BufferGeometry {
   const meshData = buildBatwingMeshData(settings, 'batwing')
@@ -136,10 +304,21 @@ export function buildTpmsQuadMeshData(
   geometryType: TpmsGeometryType,
   batwingFamily: BatwingFamilyType = 'classic',
 ): BatwingQuadMeshData {
+  if (geometryType === 'scherks') {
+    return buildScherksQuadMeshData()
+  }
+
   const meshData = buildBatwingMeshData(settings, geometryType, batwingFamily)
   return {
     vertices: meshData.vertices.map((vertex) => vertex.clone()),
     quadFaces: meshData.quadFaces.map(([a, b, c, d]) => [a, b, c, d]),
+  }
+}
+
+function buildScherksQuadMeshData(): BatwingQuadMeshData {
+  return {
+    vertices: SCHERKS_VERTICES.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+    quadFaces: SCHERKS_QUAD_FACES.map(([a, b, c, d]) => [a, b, c, d]),
   }
 }
 
@@ -152,7 +331,8 @@ function buildBatwingMeshData(
   const t1 = expandSetting(settings.t1)
   const t2 = expandSetting(settings.t2)
   const t3 = expandSetting(settings.t3)
-  const mv = createSourceVertices(geometryType, batwingFamily)
+  const sourceGeometryType = usesInteriorTpmsWarp(geometryType) ? 'batwing' : geometryType
+  const mv = createSourceVertices(sourceGeometryType, batwingFamily)
   const ep: THREE.Vector3[] = []
   const fv: THREE.Vector3[] = []
   const np: THREE.Vector3[] = []
@@ -269,7 +449,7 @@ function buildBatwingMeshData(
     sideBase,
     detailBase,
   })
-  const vertices = [...ep, ...fv, ...np, ...tv, ...tve]
+  const vertices = applyInteriorTpmsWarp([...ep, ...fv, ...np, ...tv, ...tve], geometryType)
   const indices = triangulateQuads(quadFaces)
 
   if (vertices.length !== 33 || quadFaces.length !== 24 || indices.length !== 144) {
@@ -430,6 +610,52 @@ function warpVertexForTpms(
     vertex.y + displacement.y * halfHeight * offsetScale,
     vertex.z + displacement.z * halfDepth * offsetScale,
   )
+}
+
+function usesInteriorTpmsWarp(geometryType: TpmsGeometryType): boolean {
+  return geometryType === 'scherk-1' || geometryType === 'scherk-2'
+}
+
+function applyInteriorTpmsWarp(vertices: THREE.Vector3[], geometryType: TpmsGeometryType): THREE.Vector3[] {
+  if (!usesInteriorTpmsWarp(geometryType)) {
+    return vertices
+  }
+
+  const halfWidth = BATWING_BOX_DIMENSIONS.width / 2
+  const halfDepth = BATWING_BOX_DIMENSIONS.depth / 2
+  const halfHeight = BATWING_BOX_DIMENSIONS.height / 2
+  return vertices.map((vertex) => warpInteriorVertexForTpms(vertex, geometryType, halfWidth, halfHeight, halfDepth))
+}
+
+function warpInteriorVertexForTpms(
+  vertex: THREE.Vector3,
+  geometryType: TpmsGeometryType,
+  halfWidth: number,
+  halfHeight: number,
+  halfDepth: number,
+): THREE.Vector3 {
+  const nx = vertex.x / Math.max(halfWidth, Number.EPSILON)
+  const ny = vertex.y / Math.max(halfHeight, Number.EPSILON)
+  const nz = vertex.z / Math.max(halfDepth, Number.EPSILON)
+  const x = nx * Math.PI * 1.35
+  const y = ny * Math.PI * 1.35
+  const z = nz * Math.PI * 1.35
+  const displacement = evaluateTpmsDisplacement(geometryType, x, y, z)
+  const boundaryWeight =
+    periodicBoundaryWeight(nx) * periodicBoundaryWeight(ny) * periodicBoundaryWeight(nz)
+  const offsetScale = geometryType === 'scherk-1' ? 0.5 : 0.42
+
+  return new THREE.Vector3(
+    vertex.x + displacement.x * halfWidth * offsetScale * boundaryWeight,
+    vertex.y + displacement.y * halfHeight * offsetScale * boundaryWeight,
+    vertex.z + displacement.z * halfDepth * offsetScale * boundaryWeight,
+  )
+}
+
+function periodicBoundaryWeight(value: number): number {
+  const clamped = THREE.MathUtils.clamp(Math.abs(value), 0, 1)
+  const smooth = 1 - clamped * clamped * (3 - 2 * clamped)
+  return smooth * smooth
 }
 
 function evaluateTpmsField(geometryType: TpmsGeometryType, x: number, y: number, z: number): number {
