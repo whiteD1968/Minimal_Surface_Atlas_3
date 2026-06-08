@@ -34,6 +34,18 @@ type BatwingArraySettings = {
   subdivisions: number
 }
 
+type BatwingAggregatorSettings = {
+  enabled: boolean
+  moduleCount: number
+  seed: number
+  growthMode: AggregatorGrowthMode
+  adjacencyRule: AggregatorAdjacencyRule
+}
+
+type AggregatorGrowthMode = 'branching' | 'compact' | 'vertical' | 'radial' | 'strata' | 'random-walk'
+
+type AggregatorAdjacencyRule = 'face' | 'edge' | 'corner' | 'bridge'
+
 type BatwingDepthGradientSettings = {
   baseDepth: number
   topThin: number
@@ -50,8 +62,20 @@ type BatwingSymmetrySettings = {
 
 type ArrayControlKey = keyof BatwingArraySettings
 
+type AggregatorControlKey = Exclude<keyof BatwingAggregatorSettings, 'enabled' | 'growthMode' | 'adjacencyRule'>
+
 type ArraySliderBinding = {
   key: ArrayControlKey
+  fallback: number
+  min: number
+  max: number
+  integer: boolean
+  slider: HTMLInputElement
+  valueInput: HTMLInputElement
+}
+
+type AggregatorSliderBinding = {
+  key: AggregatorControlKey
   fallback: number
   min: number
   max: number
@@ -99,6 +123,8 @@ type BatwingTargetSurfaceSettings = {
   blend: number
   offset: number
   targetScale: number
+  uSubdivisions: number
+  vSubdivisions: number
 }
 
 type LatticeControlKey = keyof BatwingLatticeSettings
@@ -130,6 +156,7 @@ type TargetSurfaceSliderBinding = {
   fallback: number
   min: number
   max: number
+  integer?: boolean
   slider: HTMLInputElement
   valueInput: HTMLInputElement
 }
@@ -144,6 +171,7 @@ type BatwingAppState = {
   batwingFamily: BatwingFamilyType
   settings: BatwingSettings
   arraySettings: BatwingArraySettings
+  aggregatorSettings: BatwingAggregatorSettings
   depthGradientSettings: BatwingDepthGradientSettings
   symmetrySettings: BatwingSymmetrySettings
   latticeSettings: BatwingLatticeSettings
@@ -157,6 +185,7 @@ type BatwingAppState = {
   showLatticeControls: boolean
   showBackFaces: boolean
   showSeamDebug: boolean
+  viewportDisplayMode: ViewportDisplayMode
   foilColorHex: string
   wireColorHex: string
 }
@@ -166,6 +195,37 @@ type LoadedTargetSurface = {
   triangles: Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>
   bounds: THREE.Box3
   previewMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
+  panelGridLines: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>
+  panelGridMarkers: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>
+}
+
+type TargetSurfaceParameterization = {
+  origin: THREE.Vector3
+  uAxis: THREE.Vector3
+  vAxis: THREE.Vector3
+  minU: number
+  maxU: number
+  minV: number
+  maxV: number
+  triangles: ProjectedTargetTriangle[]
+}
+
+type ProjectedTargetTriangle = {
+  a: THREE.Vector3
+  b: THREE.Vector3
+  c: THREE.Vector3
+  au: number
+  av: number
+  bu: number
+  bv: number
+  cu: number
+  cv: number
+  normal: THREE.Vector3
+}
+
+type TargetSurfaceSample = {
+  position: THREE.Vector3
+  normal: THREE.Vector3
 }
 
 type BatwingMaterialStyle = {
@@ -228,6 +288,16 @@ type LatticeMarqueeState = {
 
 type LatticeSelectionMode = 'replace' | 'add' | 'remove'
 
+type ViewportDisplayMode = 'gloss' | 'solid' | 'wire' | 'uv-map'
+
+type ArrayCell = {
+  offset: THREE.Vector3
+  instanceIndex: number
+  lengthIndex: number
+  widthIndex: number
+  heightIndex: number
+}
+
 type LatticeTransformDragState = {
   anchorStartMatrix: THREE.Matrix4
   anchorStartInverse: THREE.Matrix4
@@ -268,6 +338,9 @@ document.title = 'Minimal Surface Atlas'
 const EXPORT_BASE_NAME = 'Minimal_Surface_Atlas'
 const MAX_HISTORY_STATES = 100
 const MAX_ARRAY_COUNT = 20
+const MAX_AGGREGATE_MODULES = 50
+const MAX_AGGREGATE_SEED = 1000
+const AGGREGATE_FIELD_CAPACITY_MULTIPLIER = 3
 const MAX_DEPTH_GRADIENT_FACTOR = 2
 const MAX_THICKNESS = 1
 const MAX_SUBDIVISIONS = 3
@@ -279,11 +352,15 @@ const MAX_LATTICE_FALLOFF_RADIUS = 12
 const MAX_TARGET_BLEND = 1
 const MAX_TARGET_OFFSET = 6
 const MAX_TARGET_SCALE = 20
+const MAX_TARGET_SURFACE_SUBDIVISIONS = 50
 const WELD_EPSILON = 1e-5
-const LATTICE_POINT_SIZE = 0.0825
+const LATTICE_POINT_SIZE = 0.052
 const LATTICE_MARQUEE_THRESHOLD = 4
 const LATTICE_COLOR = new THREE.Color(0xd100ff)
+const LATTICE_CORNER_COLOR = new THREE.Color(0x8d5cff)
+const LATTICE_HOVER_COLOR = new THREE.Color(0x7de7ff)
 const LATTICE_SELECTED_COLOR = new THREE.Color(0xff7a00)
+const LATTICE_PIVOT_COLOR = new THREE.Color(0x78ffbc)
 const LATTICE_LINE_COLOR = 0xffd47a
 const BOX_GUIDE_COLOR = 0x4aaed5
 const SCALE_EPSILON = 1e-4
@@ -302,12 +379,21 @@ const DEFAULT_SETTINGS: BatwingSettings = {
 }
 const DEFAULT_GEOMETRY_TYPE: TpmsGeometryType = 'batwing'
 const DEFAULT_BATWING_FAMILY: BatwingFamilyType = 'classic'
+const DEFAULT_VIEWPORT_DISPLAY_MODE: ViewportDisplayMode = 'gloss'
+const DEFAULT_STATUS_MESSAGE = 'Wheel zooms. Middle mouse pans. Right mouse orbits.'
 const DEFAULT_ARRAY_SETTINGS: BatwingArraySettings = {
   lengthCount: 1,
   widthCount: 1,
   heightCount: 1,
   thickness: 0,
   subdivisions: 0,
+}
+const DEFAULT_AGGREGATOR_SETTINGS: BatwingAggregatorSettings = {
+  enabled: false,
+  moduleCount: 8,
+  seed: 1,
+  growthMode: 'branching',
+  adjacencyRule: 'face',
 }
 const DEFAULT_DEPTH_GRADIENT_SETTINGS: BatwingDepthGradientSettings = {
   baseDepth: 0,
@@ -335,6 +421,8 @@ const DEFAULT_TARGET_SURFACE_SETTINGS: BatwingTargetSurfaceSettings = {
   blend: 1,
   offset: 0,
   targetScale: 1,
+  uSubdivisions: 8,
+  vSubdivisions: 8,
 }
 
 const FOIL_MATERIAL_STYLE: BatwingMaterialStyle = {
@@ -389,6 +477,11 @@ app.innerHTML = `
   <div class="app-shell">
     <canvas class="viewport" aria-label="Batwing mesh viewport"></canvas>
     <div id="lattice-marquee" class="lattice-marquee" hidden></div>
+    <div id="lattice-tooltip" class="lattice-tooltip" role="status" hidden></div>
+    <div id="viewport-status" class="viewport-status" role="status" aria-live="polite">
+      <span class="viewport-status-label">Orbit</span>
+      <span id="viewport-status-message">Wheel zooms. Middle mouse pans. Right mouse orbits.</span>
+    </div>
     <section id="ui-panel" class="apple-panel" aria-label="Batwing mesh controls">
       <div id="ui-handle" class="panel-drag-handle">
         <button
@@ -402,8 +495,14 @@ app.innerHTML = `
         </button>
       </div>
       <div class="ui-body panel-sections">
-        <div class="control-hint">Wheel = Zoom, MMB = Pan, RMB = Orbit</div>
-        <section class="panel-section">
+        <nav class="panel-tabbar" aria-label="Control groups">
+          <button class="panel-tab-button is-active" type="button" data-panel-tab-button="geometry" aria-pressed="true">Geometry</button>
+          <button class="panel-tab-button" type="button" data-panel-tab-button="array" aria-pressed="false">Array</button>
+          <button class="panel-tab-button" type="button" data-panel-tab-button="materials" aria-pressed="false">Materials</button>
+          <button class="panel-tab-button" type="button" data-panel-tab-button="display" aria-pressed="false">Display</button>
+          <button class="panel-tab-button" type="button" data-panel-tab-button="export" aria-pressed="false">Export</button>
+        </nav>
+        <section class="panel-section" data-panel-tab="geometry">
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Batwing</span>
           </button>
@@ -477,7 +576,7 @@ app.innerHTML = `
             </label>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="array" hidden>
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Array</span>
           </button>
@@ -505,7 +604,62 @@ app.innerHTML = `
             </label>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="array" hidden>
+          <button class="panel-section-header" type="button" aria-expanded="true">
+            <span class="panel-section-label">Aggregator</span>
+          </button>
+          <div class="panel-section-content panel-controls-stack">
+            <label class="toggle-control" for="aggregatorToggle">
+              <span>Aggregate Mode</span>
+              <input id="aggregatorToggle" type="checkbox" />
+            </label>
+            <label class="control" for="growthModeSelect">
+              <div class="control-row">
+                <span>Growth Mode</span>
+                <select id="growthModeSelect" class="value-pill value-select" aria-label="Growth mode">
+                  <option value="branching">Branching</option>
+                  <option value="compact">Compact</option>
+                  <option value="vertical">Vertical</option>
+                  <option value="radial">Radial</option>
+                  <option value="strata">Strata</option>
+                  <option value="random-walk">Random Walk</option>
+                </select>
+              </div>
+            </label>
+            <label class="control" for="adjacencyRuleSelect">
+              <div class="control-row">
+                <span>Adjacency Rule</span>
+                <select id="adjacencyRuleSelect" class="value-pill value-select" aria-label="Adjacency rule">
+                  <option value="face">Face</option>
+                  <option value="edge">Face + Edge</option>
+                  <option value="corner">Face + Corner</option>
+                  <option value="bridge">Bridge</option>
+                </select>
+              </div>
+            </label>
+            <label class="control" for="moduleCountSlider">
+              <div class="control-row">
+                <span>Module Count</span>
+                <input id="module-count-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="50" step="1" value="8" />
+              </div>
+              <input id="moduleCountSlider" type="range" min="1" max="50" value="8" step="1" />
+            </label>
+            <label class="control" for="aggregateSeedSlider">
+              <div class="control-row">
+                <span>Seed</span>
+                <input id="aggregate-seed-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="1000" step="1" value="1" />
+              </div>
+              <input id="aggregateSeedSlider" type="range" min="1" max="1000" value="1" step="1" />
+            </label>
+            <div class="control">
+              <button id="populateAggregateButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-target" aria-hidden="true"></span>
+                <span>Populate</span>
+              </button>
+            </div>
+          </div>
+        </section>
+        <section class="panel-section" data-panel-tab="geometry">
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Depth Gradient</span>
           </button>
@@ -547,7 +701,7 @@ app.innerHTML = `
             </label>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="geometry">
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Symmetry</span>
           </button>
@@ -575,7 +729,7 @@ app.innerHTML = `
             </label>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="geometry">
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Surface Mapping</span>
           </button>
@@ -587,20 +741,44 @@ app.innerHTML = `
               </div>
             </label>
             <div class="control control-grid-2">
-              <button id="loadTargetSurfaceButton" class="pill-button" type="button">Load Target</button>
-              <button id="clearTargetSurfaceButton" class="pill-button" type="button">Clear Target</button>
+              <button id="loadTargetSurfaceButton" class="pill-button" type="button">
+                <span class="control-icon icon-target" aria-hidden="true"></span>
+                <span>Load Target</span>
+              </button>
+              <button id="clearTargetSurfaceButton" class="pill-button" type="button">
+                <span class="control-icon icon-reset" aria-hidden="true"></span>
+                <span>Clear Target</span>
+              </button>
             </div>
             <div class="control">
-              <button id="snapTargetToBatwingButton" class="pill-button control-button-wide" type="button">Snap Target To Batwing Bounds</button>
+              <button id="snapTargetToBatwingButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-crosshair" aria-hidden="true"></span>
+                <span>Snap Target To Batwing Bounds</span>
+              </button>
             </div>
             <div class="control control-grid-2">
-              <button id="mapTargetButton" class="pill-button" type="button">Map Batwing To Target</button>
-              <button id="unmapTargetButton" class="pill-button" type="button">Stop Mapping</button>
+              <button id="mapTargetButton" class="pill-button" type="button">
+                <span class="control-icon icon-target" aria-hidden="true"></span>
+                <span>Map Batwing To Target</span>
+              </button>
+              <button id="unmapTargetButton" class="pill-button" type="button">
+                <span class="control-icon icon-reset" aria-hidden="true"></span>
+                <span>Stop Mapping</span>
+              </button>
             </div>
             <div class="control control-grid-2">
-              <button id="targetMoveModeButton" class="pill-button" type="button">Target Move</button>
-              <button id="targetRotateModeButton" class="pill-button" type="button">Target Rotate</button>
-              <button id="targetScaleModeButton" class="pill-button" type="button">Target Scale</button>
+              <button id="targetMoveModeButton" class="pill-button" type="button">
+                <span class="control-icon icon-move" aria-hidden="true"></span>
+                <span>Target Move</span>
+              </button>
+              <button id="targetRotateModeButton" class="pill-button" type="button">
+                <span class="control-icon icon-rotate" aria-hidden="true"></span>
+                <span>Target Rotate</span>
+              </button>
+              <button id="targetScaleModeButton" class="pill-button" type="button">
+                <span class="control-icon icon-scale" aria-hidden="true"></span>
+                <span>Target Scale</span>
+              </button>
             </div>
             <label class="control" for="targetOffsetModeSelect">
               <div class="control-row">
@@ -639,11 +817,31 @@ app.innerHTML = `
             </label>
             <label class="control" for="targetOffsetSlider">
               <div class="control-row">
-                <span>Normal Offset</span>
+                <span>Grid Z Offset</span>
                 <input id="target-offset-value" class="value-pill value-input" type="number" inputmode="decimal" min="-6" max="6" step="0.01" value="0.00" />
               </div>
               <input id="targetOffsetSlider" type="range" min="-6" max="6" value="0" step="0.01" />
             </label>
+            <label class="control" for="targetUSubdivisionsSlider">
+              <div class="control-row">
+                <span>U Subdivisions</span>
+                <input id="target-u-subdivisions-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="50" step="1" value="8" />
+              </div>
+              <input id="targetUSubdivisionsSlider" type="range" min="1" max="50" value="8" step="1" />
+            </label>
+            <label class="control" for="targetVSubdivisionsSlider">
+              <div class="control-row">
+                <span>V Subdivisions</span>
+                <input id="target-v-subdivisions-value" class="value-pill value-input" type="number" inputmode="numeric" min="1" max="50" step="1" value="8" />
+              </div>
+              <input id="targetVSubdivisionsSlider" type="range" min="1" max="50" value="8" step="1" />
+            </label>
+            <div class="control">
+              <button id="applySurfaceFieldButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-target" aria-hidden="true"></span>
+                <span>Apply Surface Field</span>
+              </button>
+            </div>
             <label class="control" for="targetScaleSlider">
               <div class="control-row">
                 <span>Target Scale</span>
@@ -653,7 +851,7 @@ app.innerHTML = `
             </label>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="array" hidden>
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Lattice</span>
           </button>
@@ -694,42 +892,70 @@ app.innerHTML = `
               <input id="falloffStrengthSlider" type="range" min="0" max="1" value="1" step="0.01" />
             </label>
             <div class="control">
-              <button id="latticeResetButton" class="pill-button control-button-wide" type="button">Reset</button>
+              <button id="latticeResetButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-reset" aria-hidden="true"></span>
+                <span>Reset</span>
+              </button>
             </div>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="display" hidden>
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Display</span>
           </button>
           <div class="panel-section-content panel-controls-stack">
+            <label class="control" for="viewportModeSelect">
+              <div class="control-row">
+                <span>Viewport Mode</span>
+                <select id="viewportModeSelect" class="value-pill value-select" aria-label="Viewport display mode">
+                  <option value="gloss">Gloss</option>
+                  <option value="solid">Solid</option>
+                  <option value="wire">Wire</option>
+                  <option value="uv-map">UV/Map</option>
+                </select>
+              </div>
+            </label>
             <label class="toggle-control" for="baseGridToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
               <span>Base Grid</span>
               <input id="baseGridToggle" type="checkbox" checked />
             </label>
             <label class="toggle-control" for="boxGuideToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
               <span>Bounding Boxes</span>
               <input id="boxGuideToggle" type="checkbox" />
             </label>
             <label class="toggle-control" for="latticeControlsToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
               <span>Lattice Controls</span>
               <input id="latticeControlsToggle" type="checkbox" checked />
             </label>
             <label class="toggle-control" for="wireToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
               <span>Mesh Wires</span>
               <input id="wireToggle" type="checkbox" checked />
             </label>
+            <label class="toggle-control" for="seamDebugToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
+              <span>Seam Debug</span>
+              <input id="seamDebugToggle" type="checkbox" />
+            </label>
+          </div>
+        </section>
+        <section class="panel-section" data-panel-tab="materials" hidden>
+          <button class="panel-section-header" type="button" aria-expanded="true">
+            <span class="panel-section-label">Materials</span>
+          </button>
+          <div class="panel-section-content panel-controls-stack">
             <label class="toggle-control" for="reflectionToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
               <span>Foil Material</span>
               <input id="reflectionToggle" type="checkbox" checked />
             </label>
             <label class="toggle-control" for="backFacesToggle">
+              <span class="control-icon icon-eye" aria-hidden="true"></span>
               <span>Back Faces</span>
               <input id="backFacesToggle" type="checkbox" />
-            </label>
-            <label class="toggle-control" for="seamDebugToggle">
-              <span>Seam Debug</span>
-              <input id="seamDebugToggle" type="checkbox" />
             </label>
             <label class="control" for="foilColorInput">
               <div class="control-row">
@@ -745,19 +971,28 @@ app.innerHTML = `
             </label>
           </div>
         </section>
-        <section class="panel-section">
+        <section class="panel-section" data-panel-tab="export" hidden>
           <button class="panel-section-header" type="button" aria-expanded="true">
             <span class="panel-section-label">Export</span>
           </button>
           <div class="panel-section-content panel-controls-stack">
             <div class="control">
-              <button id="exportObjButton" class="pill-button control-button-wide" type="button">Export OBJ</button>
+              <button id="exportObjButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-download" aria-hidden="true"></span>
+                <span>Export OBJ</span>
+              </button>
             </div>
             <div class="control">
-              <button id="exportGlbButton" class="pill-button control-button-wide" type="button">Export GLB</button>
+              <button id="exportGlbButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-download" aria-hidden="true"></span>
+                <span>Export GLB</span>
+              </button>
             </div>
             <div class="control">
-              <button id="exportScreenshotButton" class="pill-button control-button-wide" type="button">Export Screenshot</button>
+              <button id="exportScreenshotButton" class="pill-button control-button-wide" type="button">
+                <span class="control-icon icon-download" aria-hidden="true"></span>
+                <span>Export Screenshot</span>
+              </button>
             </div>
           </div>
         </section>
@@ -841,6 +1076,9 @@ function createStudioReflectionEnvironment(renderer: THREE.WebGLRenderer): THREE
 
 const canvas = requireElement<HTMLCanvasElement>('.viewport')
 const latticeMarquee = requireElement<HTMLDivElement>('#lattice-marquee')
+const latticeTooltip = requireElement<HTMLDivElement>('#lattice-tooltip')
+const viewportStatus = requireElement<HTMLDivElement>('#viewport-status')
+const viewportStatusMessage = requireElement<HTMLSpanElement>('#viewport-status-message')
 const uiPanel = requireElement<HTMLDivElement>('#ui-panel')
 const uiHandleTop = requireElement<HTMLDivElement>('#ui-handle')
 const collapseToggle = requireElement<HTMLButtonElement>('#collapseToggle')
@@ -855,16 +1093,22 @@ const boxGuideToggle = requireElement<HTMLInputElement>('#boxGuideToggle')
 const latticeControlsToggle = requireElement<HTMLInputElement>('#latticeControlsToggle')
 const backFacesToggle = requireElement<HTMLInputElement>('#backFacesToggle')
 const seamDebugToggle = requireElement<HTMLInputElement>('#seamDebugToggle')
+const viewportModeSelect = requireElement<HTMLSelectElement>('#viewportModeSelect')
 const foilColorInput = requireElement<HTMLInputElement>('#foilColorInput')
 const wireColorInput = requireElement<HTMLInputElement>('#wireColorInput')
 const geometryTypeSelect = requireElement<HTMLSelectElement>('#geometryTypeSelect')
 const batwingFamilySelect = requireElement<HTMLSelectElement>('#batwingFamilySelect')
+const aggregatorToggle = requireElement<HTMLInputElement>('#aggregatorToggle')
+const growthModeSelect = requireElement<HTMLSelectElement>('#growthModeSelect')
+const adjacencyRuleSelect = requireElement<HTMLSelectElement>('#adjacencyRuleSelect')
+const populateAggregateButton = requireElement<HTMLButtonElement>('#populateAggregateButton')
 const targetSurfaceFileInput = requireElement<HTMLInputElement>('#targetSurfaceFileInput')
 const loadTargetSurfaceButton = requireElement<HTMLButtonElement>('#loadTargetSurfaceButton')
 const clearTargetSurfaceButton = requireElement<HTMLButtonElement>('#clearTargetSurfaceButton')
 const snapTargetToBatwingButton = requireElement<HTMLButtonElement>('#snapTargetToBatwingButton')
 const mapTargetButton = requireElement<HTMLButtonElement>('#mapTargetButton')
 const unmapTargetButton = requireElement<HTMLButtonElement>('#unmapTargetButton')
+const applySurfaceFieldButton = requireElement<HTMLButtonElement>('#applySurfaceFieldButton')
 const targetMoveModeButton = requireElement<HTMLButtonElement>('#targetMoveModeButton')
 const targetRotateModeButton = requireElement<HTMLButtonElement>('#targetRotateModeButton')
 const targetScaleModeButton = requireElement<HTMLButtonElement>('#targetScaleModeButton')
@@ -946,6 +1190,27 @@ const arraySliderBindings: ArraySliderBinding[] = [
     integer: true,
     slider: requireElement<HTMLInputElement>('#subdivisionsSlider'),
     valueInput: requireElement<HTMLInputElement>('#subdivisions-value'),
+  },
+]
+
+const aggregatorSliderBindings: AggregatorSliderBinding[] = [
+  {
+    key: 'moduleCount',
+    fallback: DEFAULT_AGGREGATOR_SETTINGS.moduleCount,
+    min: 1,
+    max: MAX_AGGREGATE_MODULES,
+    integer: true,
+    slider: requireElement<HTMLInputElement>('#moduleCountSlider'),
+    valueInput: requireElement<HTMLInputElement>('#module-count-value'),
+  },
+  {
+    key: 'seed',
+    fallback: DEFAULT_AGGREGATOR_SETTINGS.seed,
+    min: 1,
+    max: MAX_AGGREGATE_SEED,
+    integer: true,
+    slider: requireElement<HTMLInputElement>('#aggregateSeedSlider'),
+    valueInput: requireElement<HTMLInputElement>('#aggregate-seed-value'),
   },
 ]
 
@@ -1093,6 +1358,24 @@ const targetSurfaceSliderBindings: TargetSurfaceSliderBinding[] = [
     slider: requireElement<HTMLInputElement>('#targetScaleSlider'),
     valueInput: requireElement<HTMLInputElement>('#target-scale-value'),
   },
+  {
+    key: 'uSubdivisions',
+    fallback: DEFAULT_TARGET_SURFACE_SETTINGS.uSubdivisions,
+    min: 1,
+    max: MAX_TARGET_SURFACE_SUBDIVISIONS,
+    integer: true,
+    slider: requireElement<HTMLInputElement>('#targetUSubdivisionsSlider'),
+    valueInput: requireElement<HTMLInputElement>('#target-u-subdivisions-value'),
+  },
+  {
+    key: 'vSubdivisions',
+    fallback: DEFAULT_TARGET_SURFACE_SETTINGS.vSubdivisions,
+    min: 1,
+    max: MAX_TARGET_SURFACE_SUBDIVISIONS,
+    integer: true,
+    slider: requireElement<HTMLInputElement>('#targetVSubdivisionsSlider'),
+    valueInput: requireElement<HTMLInputElement>('#target-v-subdivisions-value'),
+  },
 ]
 
 const renderer = new THREE.WebGLRenderer({
@@ -1149,8 +1432,12 @@ let latticeState: LatticeState | null = null
 let loadedTargetSurface: LoadedTargetSurface | null = null
 let targetMappingEnabled = false
 let latticePointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
+let latticeCornerPointMesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshBasicMaterial> | null = null
 let latticeHighlightPointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
+let latticeHoverPointMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null
+let latticePivotMesh: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial> | null = null
 let latticeLineSegments: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null
+let latticeCornerPointIndices: number[] = []
 let latticeMarqueeState: LatticeMarqueeState | null = null
 let latticeTransformDragState: LatticeTransformDragState | null = null
 let isUsingLatticeTransformControls = false
@@ -1178,6 +1465,7 @@ targetTransformControl.addEventListener('dragging-changed', (event) => {
 })
 targetTransformControl.addEventListener('objectChange', () => {
   syncTargetTransformInputsFromMesh()
+  updateTargetSurfaceVisualGuides()
 })
 scene.add(targetTransformHelper)
 
@@ -1278,6 +1566,7 @@ const initialGeometrySet = buildBatwingGeometrySet(
   DEFAULT_BATWING_FAMILY,
   DEFAULT_SETTINGS,
   DEFAULT_ARRAY_SETTINGS,
+  DEFAULT_AGGREGATOR_SETTINGS,
   DEFAULT_DEPTH_GRADIENT_SETTINGS,
   DEFAULT_SYMMETRY_SETTINGS,
 )
@@ -1324,7 +1613,7 @@ applyFoilColorFromHex(`#${FOIL_MATERIAL_STYLE.color.toString(16).padStart(6, '0'
 applyWireColorFromHex('#37506c')
 
 const boxGuide = new THREE.LineSegments(
-  buildArrayBoxGuideGeometry(DEFAULT_ARRAY_SETTINGS),
+  buildArrayBoxGuideGeometry(DEFAULT_ARRAY_SETTINGS, DEFAULT_AGGREGATOR_SETTINGS),
   new THREE.LineBasicMaterial({
     color: BOX_GUIDE_COLOR,
     transparent: true,
@@ -1353,6 +1642,9 @@ let pendingControlHistoryState: BatwingAppState | null = null
 let isApplyingHistoryState = false
 let geometryTypeBeforeEdit: TpmsGeometryType | null = null
 let batwingFamilyBeforeEdit: BatwingFamilyType | null = null
+let viewportDisplayModeBeforeEdit: ViewportDisplayMode | null = null
+let growthModeBeforeEdit: AggregatorGrowthMode | null = null
+let adjacencyRuleBeforeEdit: AggregatorAdjacencyRule | null = null
 const undoHistory: BatwingAppState[] = []
 const redoHistory: BatwingAppState[] = []
 
@@ -1373,6 +1665,10 @@ function readArraySliderNumber(binding: ArraySliderBinding): number {
   return normalizeArraySliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
 }
 
+function readAggregatorSliderNumber(binding: AggregatorSliderBinding): number {
+  return normalizeAggregatorSliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
+}
+
 function readSymmetrySliderNumber(binding: SymmetrySliderBinding): number {
   return normalizeSymmetrySliderValue(binding, readSliderNumber(binding.slider, binding.fallback))
 }
@@ -1390,6 +1686,14 @@ function readTargetSurfaceSliderNumber(binding: TargetSurfaceSliderBinding): num
 }
 
 function normalizeArraySliderValue(binding: ArraySliderBinding, value: number): number {
+  const safeValue = Number.isFinite(value) ? value : binding.fallback
+  const clampedValue = clampNumber(safeValue, binding.min, binding.max)
+  const snappedValue = snapValueToSlider(clampedValue, binding.slider)
+  const nextValue = binding.integer ? Math.round(snappedValue) : snappedValue
+  return clampNumber(nextValue, binding.min, binding.max)
+}
+
+function normalizeAggregatorSliderValue(binding: AggregatorSliderBinding, value: number): number {
   const safeValue = Number.isFinite(value) ? value : binding.fallback
   const clampedValue = clampNumber(safeValue, binding.min, binding.max)
   const snappedValue = snapValueToSlider(clampedValue, binding.slider)
@@ -1427,7 +1731,8 @@ function normalizeLatticeInfluenceSliderValue(binding: LatticeInfluenceSliderBin
 function normalizeTargetSurfaceSliderValue(binding: TargetSurfaceSliderBinding, value: number): number {
   const safeValue = Number.isFinite(value) ? value : binding.fallback
   const clampedValue = clampNumber(safeValue, binding.min, binding.max)
-  return snapValueToSlider(clampedValue, binding.slider)
+  const snappedValue = snapValueToSlider(clampedValue, binding.slider)
+  return binding.integer ? Math.round(clampNumber(snappedValue, binding.min, binding.max)) : snappedValue
 }
 
 function formatSymmetrySliderValue(binding: SymmetrySliderBinding, value: number): string {
@@ -1435,6 +1740,14 @@ function formatSymmetrySliderValue(binding: SymmetrySliderBinding, value: number
 }
 
 function formatArraySliderValue(binding: ArraySliderBinding, value: number): string {
+  return binding.integer ? `${Math.round(value)}` : formatSliderValue(value)
+}
+
+function formatAggregatorSliderValue(binding: AggregatorSliderBinding, value: number): string {
+  return binding.integer ? `${Math.round(value)}` : formatSliderValue(value)
+}
+
+function formatTargetSurfaceSliderValue(binding: TargetSurfaceSliderBinding, value: number): string {
   return binding.integer ? `${Math.round(value)}` : formatSliderValue(value)
 }
 
@@ -1526,6 +1839,41 @@ function getCurrentArraySettings(): BatwingArraySettings {
   )
 }
 
+function getCurrentAggregatorSettings(): BatwingAggregatorSettings {
+  const sliderSettings = aggregatorSliderBindings.reduce<Pick<BatwingAggregatorSettings, 'moduleCount' | 'seed'>>(
+    (settings, binding) => {
+      settings[binding.key] = readAggregatorSliderNumber(binding)
+      return settings
+    },
+    {
+      moduleCount: DEFAULT_AGGREGATOR_SETTINGS.moduleCount,
+      seed: DEFAULT_AGGREGATOR_SETTINGS.seed,
+    },
+  )
+  return {
+    enabled: aggregatorToggle.checked,
+    growthMode: getCurrentAggregatorGrowthMode(),
+    adjacencyRule: getCurrentAggregatorAdjacencyRule(),
+    ...sliderSettings,
+  }
+}
+
+function getCurrentAggregatorGrowthMode(): AggregatorGrowthMode {
+  const value = growthModeSelect.value
+  if (value === 'compact' || value === 'vertical' || value === 'radial' || value === 'strata' || value === 'random-walk') {
+    return value
+  }
+  return 'branching'
+}
+
+function getCurrentAggregatorAdjacencyRule(): AggregatorAdjacencyRule {
+  const value = adjacencyRuleSelect.value
+  if (value === 'edge' || value === 'corner' || value === 'bridge') {
+    return value
+  }
+  return 'face'
+}
+
 function getCurrentDepthGradientSettings(): BatwingDepthGradientSettings {
   return depthGradientSliderBindings.reduce<BatwingDepthGradientSettings>(
     (settings, binding) => {
@@ -1576,6 +1924,8 @@ function getCurrentTargetSurfaceSettings(): BatwingTargetSurfaceSettings {
       blend: DEFAULT_TARGET_SURFACE_SETTINGS.blend,
       offset: DEFAULT_TARGET_SURFACE_SETTINGS.offset,
       targetScale: DEFAULT_TARGET_SURFACE_SETTINGS.targetScale,
+      uSubdivisions: DEFAULT_TARGET_SURFACE_SETTINGS.uSubdivisions,
+      vSubdivisions: DEFAULT_TARGET_SURFACE_SETTINGS.vSubdivisions,
     },
   )
   return {
@@ -1600,6 +1950,16 @@ function cloneArraySettings(settings: BatwingArraySettings): BatwingArraySetting
     heightCount: settings.heightCount,
     thickness: settings.thickness,
     subdivisions: settings.subdivisions,
+  }
+}
+
+function cloneAggregatorSettings(settings: BatwingAggregatorSettings): BatwingAggregatorSettings {
+  return {
+    enabled: settings.enabled,
+    moduleCount: settings.moduleCount,
+    seed: settings.seed,
+    growthMode: settings.growthMode,
+    adjacencyRule: settings.adjacencyRule,
   }
 }
 
@@ -1644,6 +2004,8 @@ function cloneTargetSurfaceSettings(settings: BatwingTargetSurfaceSettings): Bat
     blend: settings.blend,
     offset: settings.offset,
     targetScale: settings.targetScale,
+    uSubdivisions: settings.uSubdivisions,
+    vSubdivisions: settings.vSubdivisions,
   }
 }
 
@@ -1681,6 +2043,7 @@ function cloneAppState(state: BatwingAppState): BatwingAppState {
     batwingFamily: state.batwingFamily,
     settings: cloneSettings(state.settings),
     arraySettings: cloneArraySettings(state.arraySettings),
+    aggregatorSettings: cloneAggregatorSettings(state.aggregatorSettings),
     depthGradientSettings: cloneDepthGradientSettings(state.depthGradientSettings),
     symmetrySettings: cloneSymmetrySettings(state.symmetrySettings),
     latticeSettings: cloneLatticeSettings(state.latticeSettings),
@@ -1694,6 +2057,7 @@ function cloneAppState(state: BatwingAppState): BatwingAppState {
     showLatticeControls: state.showLatticeControls,
     showBackFaces: state.showBackFaces,
     showSeamDebug: state.showSeamDebug,
+    viewportDisplayMode: state.viewportDisplayMode,
     foilColorHex: state.foilColorHex,
     wireColorHex: state.wireColorHex,
   }
@@ -1705,6 +2069,7 @@ function captureAppState(): BatwingAppState {
     batwingFamily: getCurrentBatwingFamily(),
     settings: getCurrentSettings(),
     arraySettings: getCurrentArraySettings(),
+    aggregatorSettings: getCurrentAggregatorSettings(),
     depthGradientSettings: getCurrentDepthGradientSettings(),
     symmetrySettings: getCurrentSymmetrySettings(),
     latticeSettings: getCurrentLatticeSettings(),
@@ -1718,6 +2083,7 @@ function captureAppState(): BatwingAppState {
     showLatticeControls: latticeControlsToggle.checked,
     showBackFaces: backFacesToggle.checked,
     showSeamDebug: seamDebugToggle.checked,
+    viewportDisplayMode: getCurrentViewportDisplayMode(),
     foilColorHex: normalizeColorInputHex(foilColorInput.value, userFoilColor.getHexString()),
     wireColorHex: normalizeColorInputHex(wireColorInput.value, wireMaterial.color.getHexString()),
   }
@@ -1736,6 +2102,11 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.arraySettings.heightCount === b.arraySettings.heightCount &&
     a.arraySettings.thickness === b.arraySettings.thickness &&
     a.arraySettings.subdivisions === b.arraySettings.subdivisions &&
+    a.aggregatorSettings.enabled === b.aggregatorSettings.enabled &&
+    a.aggregatorSettings.moduleCount === b.aggregatorSettings.moduleCount &&
+    a.aggregatorSettings.seed === b.aggregatorSettings.seed &&
+    a.aggregatorSettings.growthMode === b.aggregatorSettings.growthMode &&
+    a.aggregatorSettings.adjacencyRule === b.aggregatorSettings.adjacencyRule &&
     a.depthGradientSettings.baseDepth === b.depthGradientSettings.baseDepth &&
     a.depthGradientSettings.topThin === b.depthGradientSettings.topThin &&
     a.depthGradientSettings.supportThicken === b.depthGradientSettings.supportThicken &&
@@ -1753,6 +2124,8 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.targetSurfaceSettings.blend === b.targetSurfaceSettings.blend &&
     a.targetSurfaceSettings.offset === b.targetSurfaceSettings.offset &&
     a.targetSurfaceSettings.targetScale === b.targetSurfaceSettings.targetScale &&
+    a.targetSurfaceSettings.uSubdivisions === b.targetSurfaceSettings.uSubdivisions &&
+    a.targetSurfaceSettings.vSubdivisions === b.targetSurfaceSettings.vSubdivisions &&
     latticePointPositionsEqual(a.latticePointPositions, b.latticePointPositions) &&
     a.showBaseGrid === b.showBaseGrid &&
     a.showWireframe === b.showWireframe &&
@@ -1761,6 +2134,7 @@ function appStatesEqual(a: BatwingAppState, b: BatwingAppState): boolean {
     a.showLatticeControls === b.showLatticeControls &&
     a.showBackFaces === b.showBackFaces &&
     a.showSeamDebug === b.showSeamDebug &&
+    a.viewportDisplayMode === b.viewportDisplayMode &&
     a.foilColorHex === b.foilColorHex &&
     a.wireColorHex === b.wireColorHex
   )
@@ -1814,6 +2188,7 @@ function applyAppState(state: BatwingAppState): void {
   applyBatwingFamily(state.batwingFamily)
   applySettings(state.settings)
   applyArraySettings(state.arraySettings)
+  applyAggregatorSettings(state.aggregatorSettings)
   applyDepthGradientSettings(state.depthGradientSettings)
   applySymmetrySettings(state.symmetrySettings)
   applyLatticeSettings(state.latticeSettings)
@@ -1834,6 +2209,7 @@ function applyAppState(state: BatwingAppState): void {
   applyBackFacesDiagnosticMode(state.showBackFaces)
   seamDebugToggle.checked = state.showSeamDebug
   seamDebugPoints.visible = state.showSeamDebug
+  applyViewportDisplayMode(state.viewportDisplayMode, false)
   applyFoilColorFromHex(state.foilColorHex)
   applyWireColorFromHex(state.wireColorHex)
   isApplyingHistoryState = false
@@ -1918,6 +2294,95 @@ function applyArraySettings(settings: BatwingArraySettings): void {
   rebuildBatwing()
 }
 
+function setArrayControlValue(key: ArrayControlKey, value: number): void {
+  const binding = arraySliderBindings.find((arrayBinding) => arrayBinding.key === key)
+  if (!binding) {
+    return
+  }
+  const nextValue = normalizeArraySliderValue(binding, value)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatArraySliderValue(binding, nextValue)
+  updateRangeProgress(binding.slider)
+}
+
+function setTargetSurfaceControlValue(key: TargetSurfaceControlKey, value: number): void {
+  const binding = targetSurfaceSliderBindings.find((targetBinding) => targetBinding.key === key)
+  if (!binding) {
+    return
+  }
+  const nextValue = normalizeTargetSurfaceSliderValue(binding, value)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatTargetSurfaceSliderValue(binding, nextValue)
+  updateRangeProgress(binding.slider)
+}
+
+function ensureAggregateFieldCapacity(): void {
+  const aggregatorSettings = getCurrentAggregatorSettings()
+  if (!aggregatorSettings.enabled) {
+    return
+  }
+
+  const targetCount = clampNumber(Math.round(aggregatorSettings.moduleCount), 1, MAX_AGGREGATE_MODULES)
+  const targetCapacity = Math.min(
+    MAX_ARRAY_COUNT * MAX_ARRAY_COUNT * MAX_ARRAY_COUNT,
+    Math.ceil(targetCount * AGGREGATE_FIELD_CAPACITY_MULTIPLIER),
+  )
+  const arraySettings = getCurrentArraySettings()
+  let lengthCount = arraySettings.lengthCount
+  let widthCount = arraySettings.widthCount
+  let heightCount = arraySettings.heightCount
+
+  const getCapacity = (): number => lengthCount * widthCount * heightCount
+  while (getCapacity() < targetCapacity) {
+    if (lengthCount <= widthCount && lengthCount <= heightCount && lengthCount < MAX_ARRAY_COUNT) {
+      lengthCount += 1
+    } else if (widthCount <= heightCount && widthCount < MAX_ARRAY_COUNT) {
+      widthCount += 1
+    } else if (heightCount < MAX_ARRAY_COUNT) {
+      heightCount += 1
+    } else {
+      break
+    }
+  }
+
+  if (
+    lengthCount !== arraySettings.lengthCount ||
+    widthCount !== arraySettings.widthCount ||
+    heightCount !== arraySettings.heightCount
+  ) {
+    setArrayControlValue('lengthCount', lengthCount)
+    setArrayControlValue('widthCount', widthCount)
+    setArrayControlValue('heightCount', heightCount)
+  }
+}
+
+function applySurfaceFieldSettings(): void {
+  const targetSettings = getCurrentTargetSurfaceSettings()
+  aggregatorToggle.checked = false
+  setArrayControlValue('widthCount', targetSettings.uSubdivisions)
+  setArrayControlValue('lengthCount', targetSettings.vSubdivisions)
+  if (Math.abs(targetSettings.offset) <= 1e-4) {
+    setTargetSurfaceControlValue('offset', 1)
+  }
+  targetMappingEnabled = Boolean(loadedTargetSurface)
+  updateTargetSurfaceVisualGuides()
+  rebuildBatwing()
+}
+
+function applyAggregatorSettings(settings: BatwingAggregatorSettings): void {
+  aggregatorToggle.checked = settings.enabled
+  growthModeSelect.value = settings.growthMode
+  adjacencyRuleSelect.value = settings.adjacencyRule
+  for (const binding of aggregatorSliderBindings) {
+    const nextValue = normalizeAggregatorSliderValue(binding, settings[binding.key])
+    binding.slider.value = `${nextValue}`
+    binding.valueInput.value = formatAggregatorSliderValue(binding, nextValue)
+    updateRangeProgress(binding.slider)
+  }
+
+  rebuildBatwing()
+}
+
 function applyDepthGradientSettings(settings: BatwingDepthGradientSettings): void {
   for (const binding of depthGradientSliderBindings) {
     const nextValue = normalizeDepthGradientValue(binding, settings[binding.key])
@@ -1965,9 +2430,10 @@ function applyTargetSurfaceSettings(settings: BatwingTargetSurfaceSettings): voi
   for (const binding of targetSurfaceSliderBindings) {
     const nextValue = normalizeTargetSurfaceSliderValue(binding, settings[binding.key])
     binding.slider.value = `${nextValue}`
-    binding.valueInput.value = formatSliderValue(nextValue)
+    binding.valueInput.value = formatTargetSurfaceSliderValue(binding, nextValue)
     updateRangeProgress(binding.slider)
   }
+  updateTargetSurfaceVisualGuides()
   rebuildBatwing()
 }
 
@@ -2022,6 +2488,16 @@ function commitArrayValueInput(binding: ArraySliderBinding): void {
   rebuildBatwing()
 }
 
+function commitAggregatorValueInput(binding: AggregatorSliderBinding): void {
+  const parsedValue = Number.parseFloat(binding.valueInput.value)
+  const nextValue = normalizeAggregatorSliderValue(binding, parsedValue)
+  binding.slider.value = `${nextValue}`
+  binding.valueInput.value = formatAggregatorSliderValue(binding, nextValue)
+  updateRangeProgress(binding.slider)
+  ensureAggregateFieldCapacity()
+  rebuildBatwing()
+}
+
 function commitDepthGradientValueInput(binding: DepthGradientSliderBinding): void {
   const parsedValue = Number.parseFloat(binding.valueInput.value)
   const nextValue = normalizeDepthGradientValue(binding, parsedValue)
@@ -2061,8 +2537,9 @@ function commitTargetSurfaceValueInput(binding: TargetSurfaceSliderBinding): voi
   const parsedValue = Number.parseFloat(binding.valueInput.value)
   const nextValue = normalizeTargetSurfaceSliderValue(binding, parsedValue)
   binding.slider.value = `${nextValue}`
-  binding.valueInput.value = formatSliderValue(nextValue)
+  binding.valueInput.value = formatTargetSurfaceSliderValue(binding, nextValue)
   updateRangeProgress(binding.slider)
+  updateTargetSurfaceVisualGuides()
   rebuildBatwing()
 }
 
@@ -2151,6 +2628,53 @@ function bindArraySlider(binding: ArraySliderBinding): void {
     if (event.key === 'Escape') {
       event.preventDefault()
       binding.valueInput.value = formatArraySliderValue(binding, readArraySliderNumber(binding))
+      clearControlHistoryEdit()
+      binding.valueInput.blur()
+    }
+  })
+}
+
+function bindAggregatorSlider(binding: AggregatorSliderBinding): void {
+  const syncFromSlider = (): void => {
+    beginControlHistoryEdit()
+    const value = readAggregatorSliderNumber(binding)
+    binding.slider.value = `${value}`
+    binding.valueInput.value = formatAggregatorSliderValue(binding, value)
+    updateRangeProgress(binding.slider)
+    ensureAggregateFieldCapacity()
+    rebuildBatwing()
+  }
+
+  binding.slider.addEventListener('pointerdown', beginControlHistoryEdit)
+  binding.slider.addEventListener('pointerup', finishControlHistoryEdit)
+  binding.slider.addEventListener('pointercancel', finishControlHistoryEdit)
+  binding.slider.addEventListener('keydown', (event) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+      beginControlHistoryEdit()
+    }
+  })
+  binding.slider.addEventListener('input', syncFromSlider)
+  binding.slider.addEventListener('change', finishControlHistoryEdit)
+  binding.valueInput.addEventListener('focus', beginControlHistoryEdit)
+  binding.valueInput.addEventListener('change', () => {
+    commitAggregatorValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('blur', () => {
+    commitAggregatorValueInput(binding)
+    finishControlHistoryEdit()
+  })
+  binding.valueInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commitAggregatorValueInput(binding)
+      finishControlHistoryEdit()
+      binding.valueInput.blur()
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      binding.valueInput.value = formatAggregatorSliderValue(binding, readAggregatorSliderNumber(binding))
       clearControlHistoryEdit()
       binding.valueInput.blur()
     }
@@ -2330,8 +2854,9 @@ function bindTargetSurfaceSlider(binding: TargetSurfaceSliderBinding): void {
     beginControlHistoryEdit()
     const value = readTargetSurfaceSliderNumber(binding)
     binding.slider.value = `${value}`
-    binding.valueInput.value = formatSliderValue(value)
+    binding.valueInput.value = formatTargetSurfaceSliderValue(binding, value)
     updateRangeProgress(binding.slider)
+    updateTargetSurfaceVisualGuides()
     rebuildBatwing()
   }
 
@@ -2361,6 +2886,7 @@ function rebuildBatwing(): void {
   const batwingFamily = getCurrentBatwingFamily()
   const settings = getCurrentSettings()
   const arraySettings = getCurrentArraySettings()
+  const aggregatorSettings = getCurrentAggregatorSettings()
   const depthGradientSettings = getCurrentDepthGradientSettings()
   const symmetrySettings = getCurrentSymmetrySettings()
   const sourceQuadMesh = buildSubdividedWeldedArrayQuadMesh(
@@ -2368,6 +2894,7 @@ function rebuildBatwing(): void {
     batwingFamily,
     settings,
     arraySettings,
+    aggregatorSettings,
     symmetrySettings,
   )
   currentSourceQuadMesh = cloneQuadMeshData(sourceQuadMesh)
@@ -2379,10 +2906,11 @@ function rebuildBatwing(): void {
   const displayQuadMesh = buildFinalDisplayQuadMesh(
     mappedQuadMesh,
     arraySettings,
+    aggregatorSettings,
     depthGradientSettings,
     getCurrentTargetSurfaceSettings().offsetMode,
   )
-  const nextGeometrySet = buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings)
+  const nextGeometrySet = buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings, aggregatorSettings)
 
   batwingMesh.geometry.dispose()
   batwingMesh.geometry = nextGeometrySet.meshGeometry
@@ -2391,7 +2919,7 @@ function rebuildBatwing(): void {
   wireOverlay.geometry = nextGeometrySet.wireGeometry
 
   boxGuide.geometry.dispose()
-  boxGuide.geometry = buildArrayBoxGuideGeometry(arraySettings)
+  boxGuide.geometry = buildArrayBoxGuideGeometry(arraySettings, aggregatorSettings)
   updateSeamDebugGeometry()
   updateLightingForCurrentGeometry()
   updateGeometryDataset()
@@ -2404,6 +2932,7 @@ function rebuildCurrentDeformedGeometry(): void {
   }
 
   const arraySettings = getCurrentArraySettings()
+  const aggregatorSettings = getCurrentAggregatorSettings()
   const depthGradientSettings = getCurrentDepthGradientSettings()
   const mappedQuadMesh = applyTargetSurfaceMapping(
     applyLatticeDeformation(sourceQuadMesh),
@@ -2412,10 +2941,11 @@ function rebuildCurrentDeformedGeometry(): void {
   const displayQuadMesh = buildFinalDisplayQuadMesh(
     mappedQuadMesh,
     arraySettings,
+    aggregatorSettings,
     depthGradientSettings,
     getCurrentTargetSurfaceSettings().offsetMode,
   )
-  const nextGeometrySet = buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings)
+  const nextGeometrySet = buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings, aggregatorSettings)
   batwingMesh.geometry.dispose()
   batwingMesh.geometry = nextGeometrySet.meshGeometry
   wireOverlay.geometry.dispose()
@@ -2445,6 +2975,16 @@ function updateLightingForCurrentGeometry(): void {
 
 function getArrayInstanceCount(settings: BatwingArraySettings): number {
   return settings.lengthCount * settings.widthCount * settings.heightCount
+}
+
+function getActiveArrayInstanceCount(
+  arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
+): number {
+  if (!aggregatorSettings.enabled) {
+    return getArrayInstanceCount(arraySettings)
+  }
+  return getAggregateArrayCells(arraySettings, aggregatorSettings).length
 }
 
 function getWeldKey(x: number, y: number, z: number): string {
@@ -2495,18 +3035,310 @@ function forEachArrayOffset(
   }
 }
 
-function buildArrayLineGeometry(baseGeometry: THREE.BufferGeometry, settings: BatwingArraySettings): THREE.BufferGeometry {
+function getAllArrayCells(settings: BatwingArraySettings): ArrayCell[] {
+  const cells: ArrayCell[] = []
+  forEachArrayOffset(settings, (offset, instanceIndex, lengthIndex, widthIndex, heightIndex) => {
+    cells.push({
+      offset,
+      instanceIndex,
+      lengthIndex,
+      widthIndex,
+      heightIndex,
+    })
+  })
+  return cells
+}
+
+function getAggregateArrayCells(
+  arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
+): ArrayCell[] {
+  const allCells = getAllArrayCells(arraySettings)
+  if (!aggregatorSettings.enabled) {
+    return allCells
+  }
+
+  const targetCount = Math.min(
+    Math.max(1, Math.round(aggregatorSettings.moduleCount)),
+    allCells.length,
+  )
+  if (targetCount >= allCells.length) {
+    return allCells
+  }
+
+  const cellLookup = new Map<string, ArrayCell>()
+  for (const cell of allCells) {
+    cellLookup.set(getArrayCellKey(cell.lengthIndex, cell.widthIndex, cell.heightIndex), cell)
+  }
+
+  const random = createSeededRandom(aggregatorSettings.seed)
+  const startCell = getCenteredSeedCell(allCells, arraySettings, random)
+  const selectedKeys = new Set<string>()
+  const frontierKeys = new Set<string>()
+  const selectedCells: ArrayCell[] = []
+
+  const addCell = (cell: ArrayCell): void => {
+    const key = getArrayCellKey(cell.lengthIndex, cell.widthIndex, cell.heightIndex)
+    if (selectedKeys.has(key)) {
+      return
+    }
+    selectedKeys.add(key)
+    selectedCells.push(cell)
+    for (const neighborKey of getArrayCellNeighborKeys(cell, arraySettings, aggregatorSettings.adjacencyRule)) {
+      if (!selectedKeys.has(neighborKey) && cellLookup.has(neighborKey)) {
+        frontierKeys.add(neighborKey)
+      }
+    }
+  }
+
+  addCell(startCell)
+  while (selectedCells.length < targetCount && frontierKeys.size > 0) {
+    const nextKey = chooseAggregateFrontierCellKey(
+      [...frontierKeys],
+      selectedCells,
+      selectedKeys,
+      cellLookup,
+      arraySettings,
+      aggregatorSettings,
+      random,
+    )
+    frontierKeys.delete(nextKey)
+    const nextCell = cellLookup.get(nextKey)
+    if (nextCell) {
+      addCell(nextCell)
+    }
+  }
+
+  return selectedCells.sort((a, b) => a.instanceIndex - b.instanceIndex)
+}
+
+function getCenteredSeedCell(
+  cells: readonly ArrayCell[],
+  settings: BatwingArraySettings,
+  random: () => number,
+): ArrayCell {
+  const center = new THREE.Vector3(
+    (settings.lengthCount - 1) / 2,
+    (settings.widthCount - 1) / 2,
+    (settings.heightCount - 1) / 2,
+  )
+  const centerCells = cells
+    .map((cell) => ({
+      cell,
+      distance: getArrayCellIndexVector(cell).distanceToSquared(center),
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, Math.min(8, cells.length))
+  return centerCells[Math.floor(random() * centerCells.length)]?.cell ?? cells[0]
+}
+
+function chooseAggregateFrontierCellKey(
+  frontierKeys: readonly string[],
+  selectedCells: readonly ArrayCell[],
+  selectedKeys: ReadonlySet<string>,
+  cellLookup: ReadonlyMap<string, ArrayCell>,
+  settings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
+  random: () => number,
+): string {
+  let bestKey = frontierKeys[0] ?? ''
+  let bestScore = Number.NEGATIVE_INFINITY
+  const centroid = getArrayCellCentroid(selectedCells)
+  const fieldDiagonal = Math.max(
+    new THREE.Vector3(settings.lengthCount, settings.widthCount, settings.heightCount).length(),
+    1,
+  )
+
+  for (const key of frontierKeys) {
+    const cell = cellLookup.get(key)
+    if (!cell) {
+      continue
+    }
+
+    const cellVector = getArrayCellIndexVector(cell)
+    const selectedNeighborCount = getArrayCellNeighborKeys(cell, settings, aggregatorSettings.adjacencyRule).filter((neighborKey) =>
+      selectedKeys.has(neighborKey),
+    ).length
+    const sameRuleNeighborCount = Math.max(selectedNeighborCount, 1)
+    const faceNeighborCount = getArrayCellNeighborKeys(cell, settings, 'face').filter((neighborKey) =>
+      selectedKeys.has(neighborKey),
+    ).length
+    const exposedSideCount = 6 - faceNeighborCount
+    const spread = centroid ? cellVector.distanceTo(centroid) / fieldDiagonal : 0
+    const fieldCenter = getArrayFieldCenter(settings)
+    const radialSpread = cellVector.distanceTo(fieldCenter) / fieldDiagonal
+    const lateralSpread = centroid
+      ? new THREE.Vector2(cell.lengthIndex - centroid.x, cell.widthIndex - centroid.y).length() / fieldDiagonal
+      : 0
+    const verticalLevel = settings.heightCount <= 1 ? 0 : cell.heightIndex / Math.max(settings.heightCount - 1, 1)
+    const sparseConnection = 1 / sameRuleNeighborCount
+    const score = getAggregateGrowthScore({
+      cell,
+      centroid,
+      exposedSideCount,
+      faceNeighborCount,
+      lateralSpread,
+      radialSpread,
+      random,
+      sparseConnection,
+      spread,
+      verticalLevel,
+      mode: aggregatorSettings.growthMode,
+    })
+
+    if (score > bestScore) {
+      bestScore = score
+      bestKey = key
+    }
+  }
+
+  return bestKey
+}
+
+function getAggregateGrowthScore(options: {
+  cell: ArrayCell
+  centroid: THREE.Vector3 | null
+  exposedSideCount: number
+  faceNeighborCount: number
+  lateralSpread: number
+  radialSpread: number
+  random: () => number
+  sparseConnection: number
+  spread: number
+  verticalLevel: number
+  mode: AggregatorGrowthMode
+}): number {
+  const noise = options.random()
+  switch (options.mode) {
+    case 'compact':
+      return noise * 0.45 - options.spread * 2.4 + options.faceNeighborCount * 0.92
+    case 'vertical':
+      return noise * 0.62 + options.verticalLevel * 2.3 + options.spread * 0.7 + options.sparseConnection * 0.34
+    case 'radial':
+      return noise * 0.58 + options.radialSpread * 2.5 + options.exposedSideCount * 0.22
+    case 'strata': {
+      const centroidHeight = options.centroid?.z ?? options.cell.heightIndex
+      const layerAffinity = 1 / (1 + Math.abs(options.cell.heightIndex - centroidHeight))
+      return noise * 0.7 + options.lateralSpread * 1.8 + layerAffinity * 1.25 + options.exposedSideCount * 0.2
+    }
+    case 'random-walk':
+      return noise * 2.4 + options.sparseConnection * 0.28
+    case 'branching':
+    default:
+      return (
+        noise * 0.8 +
+        options.spread * 2.2 +
+        options.exposedSideCount * 0.34 +
+        options.sparseConnection * 0.75 +
+        options.verticalLevel * 0.22
+      )
+  }
+}
+
+function getArrayCellCentroid(cells: readonly ArrayCell[]): THREE.Vector3 | null {
+  if (cells.length === 0) {
+    return null
+  }
+  const centroid = new THREE.Vector3()
+  for (const cell of cells) {
+    centroid.add(getArrayCellIndexVector(cell))
+  }
+  return centroid.multiplyScalar(1 / cells.length)
+}
+
+function getArrayCellIndexVector(cell: ArrayCell): THREE.Vector3 {
+  return new THREE.Vector3(cell.lengthIndex, cell.widthIndex, cell.heightIndex)
+}
+
+function getArrayFieldCenter(settings: BatwingArraySettings): THREE.Vector3 {
+  return new THREE.Vector3(
+    (settings.lengthCount - 1) / 2,
+    (settings.widthCount - 1) / 2,
+    (settings.heightCount - 1) / 2,
+  )
+}
+
+function getArrayCellKey(lengthIndex: number, widthIndex: number, heightIndex: number): string {
+  return `${lengthIndex},${widthIndex},${heightIndex}`
+}
+
+function getArrayCellNeighborKeys(
+  cell: ArrayCell,
+  settings: BatwingArraySettings,
+  adjacencyRule: AggregatorAdjacencyRule,
+): string[] {
+  const neighborOffsets = getArrayCellNeighborOffsets(adjacencyRule)
+  const keys: string[] = []
+  for (const [dLength, dWidth, dHeight] of neighborOffsets) {
+    const lengthIndex = cell.lengthIndex + dLength
+    const widthIndex = cell.widthIndex + dWidth
+    const heightIndex = cell.heightIndex + dHeight
+    if (
+      lengthIndex >= 0 &&
+      lengthIndex < settings.lengthCount &&
+      widthIndex >= 0 &&
+      widthIndex < settings.widthCount &&
+      heightIndex >= 0 &&
+      heightIndex < settings.heightCount
+    ) {
+      keys.push(getArrayCellKey(lengthIndex, widthIndex, heightIndex))
+    }
+  }
+  return keys
+}
+
+function getArrayCellNeighborOffsets(adjacencyRule: AggregatorAdjacencyRule): Array<[number, number, number]> {
+  const offsets: Array<[number, number, number]> = []
+  for (let dLength = -1; dLength <= 1; dLength += 1) {
+    for (let dWidth = -1; dWidth <= 1; dWidth += 1) {
+      for (let dHeight = -1; dHeight <= 1; dHeight += 1) {
+        if (dLength === 0 && dWidth === 0 && dHeight === 0) {
+          continue
+        }
+        const activeAxisCount = Number(dLength !== 0) + Number(dWidth !== 0) + Number(dHeight !== 0)
+        if (
+          adjacencyRule === 'corner' ||
+          (adjacencyRule === 'edge' && activeAxisCount <= 2) ||
+          ((adjacencyRule === 'face' || adjacencyRule === 'bridge') && activeAxisCount === 1)
+        ) {
+          offsets.push([dLength, dWidth, dHeight])
+        }
+      }
+    }
+  }
+
+  if (adjacencyRule === 'bridge') {
+    offsets.push([2, 0, 0], [-2, 0, 0], [0, 2, 0], [0, -2, 0], [0, 0, 2], [0, 0, -2])
+  }
+
+  return offsets
+}
+
+function createSeededRandom(seed: number): () => number {
+  let state = Math.max(1, Math.floor(Math.abs(seed))) >>> 0
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+}
+
+function buildArrayLineGeometry(
+  baseGeometry: THREE.BufferGeometry,
+  settings: BatwingArraySettings,
+  aggregatorSettings = DEFAULT_AGGREGATOR_SETTINGS,
+): THREE.BufferGeometry {
   const basePosition = baseGeometry.getAttribute('position') as THREE.BufferAttribute
-  const instanceCount = getArrayInstanceCount(settings)
+  const cells = getAggregateArrayCells(settings, aggregatorSettings)
+  const instanceCount = cells.length
   const positions = new Float32Array(basePosition.count * instanceCount * 3)
 
-  forEachArrayOffset(settings, (offset, instanceIndex) => {
-    const instanceOffset = instanceIndex * basePosition.count * 3
+  cells.forEach((cell, cellIndex) => {
+    const instanceOffset = cellIndex * basePosition.count * 3
     for (let vertexIndex = 0; vertexIndex < basePosition.count; vertexIndex += 1) {
       const targetIndex = instanceOffset + vertexIndex * 3
-      positions[targetIndex + 0] = basePosition.getX(vertexIndex) + offset.x
-      positions[targetIndex + 1] = basePosition.getY(vertexIndex) + offset.y
-      positions[targetIndex + 2] = basePosition.getZ(vertexIndex) + offset.z
+      positions[targetIndex + 0] = basePosition.getX(vertexIndex) + cell.offset.x
+      positions[targetIndex + 1] = basePosition.getY(vertexIndex) + cell.offset.y
+      positions[targetIndex + 2] = basePosition.getZ(vertexIndex) + cell.offset.z
     }
   })
 
@@ -2521,6 +3353,7 @@ function buildBatwingGeometrySet(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
   depthGradientSettings: BatwingDepthGradientSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): BatwingGeometrySet {
@@ -2529,24 +3362,27 @@ function buildBatwingGeometrySet(
     batwingFamily,
     settings,
     arraySettings,
+    aggregatorSettings,
     symmetrySettings,
   )
   currentSourceQuadMesh = cloneQuadMeshData(quadMesh)
   const displayQuadMesh = buildFinalDisplayQuadMesh(
     quadMesh,
     arraySettings,
+    aggregatorSettings,
     depthGradientSettings,
     DEFAULT_TARGET_SURFACE_SETTINGS.offsetMode,
   )
-  return buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings)
+  return buildGeometrySetFromQuadMesh(displayQuadMesh, arraySettings, aggregatorSettings)
 }
 
 function buildGeometrySetFromQuadMesh(
   quadMesh: QuadMeshData,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
 ): BatwingGeometrySet {
   return {
-    meshGeometry: buildGeometryFromQuadMesh(quadMesh, arraySettings),
+    meshGeometry: buildGeometryFromQuadMesh(quadMesh, arraySettings, aggregatorSettings),
     wireGeometry: buildQuadWireGeometry(quadMesh),
   }
 }
@@ -2569,8 +3405,11 @@ function createLatticeTransformControl(
   control.addEventListener('dragging-changed', () => {
     if (control.dragging) {
       setExclusiveLatticeTransformControl(control)
+      const axis = getLatticeTransformControlAxis(control) ?? 'free'
+      setViewportStatus(`${formatTransformModeLabel(mode)} ${axis}`, `Dragging selected handle group on ${axis} axis.`)
     } else {
       setExclusiveLatticeTransformControl(null)
+      updateSelectionStatusHint()
     }
     updateLatticeTransformDraggingState()
   })
@@ -2578,6 +3417,7 @@ function createLatticeTransformControl(
     if (!getLatticeTransformControlAxis(control)) {
       return
     }
+    setViewportStatus(formatTransformModeLabel(mode), 'Drag the highlighted axis to transform the selected lattice handles.')
     beginLatticeTransformDrag(control)
     isUsingLatticeTransformControls = true
   })
@@ -2603,6 +3443,16 @@ function createLatticeTransformControl(
   tintLatticeTransformGizmo(control)
   scene.add(helper)
   return { control, helper }
+}
+
+function formatTransformModeLabel(mode: 'translate' | 'rotate' | 'scale'): string {
+  if (mode === 'translate') {
+    return 'Move'
+  }
+  if (mode === 'rotate') {
+    return 'Rotate'
+  }
+  return 'Scale'
 }
 
 function tintLatticeTransformGizmo(control: TransformControls): void {
@@ -3099,6 +3949,304 @@ function applyLatticeDeformation(quadMesh: QuadMeshData): QuadMeshData {
   }
 }
 
+function getTransformedTargetSurfaceTriangles(
+  settings: BatwingTargetSurfaceSettings,
+): Array<[THREE.Vector3, THREE.Vector3, THREE.Vector3]> {
+  if (!loadedTargetSurface) {
+    return []
+  }
+  loadedTargetSurface.previewMesh.updateMatrixWorld(true)
+  const meshMatrix = loadedTargetSurface.previewMesh.matrixWorld.clone()
+  const targetScale = Math.max(settings.targetScale, 0.01)
+  return loadedTargetSurface.triangles.map(([a, b, c]) => [
+    a.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
+    b.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
+    c.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
+  ] as [THREE.Vector3, THREE.Vector3, THREE.Vector3])
+}
+
+function updateTargetSurfaceVisualGuides(): void {
+  if (!loadedTargetSurface) {
+    return
+  }
+
+  const settings = getCurrentTargetSurfaceSettings()
+  const transformedTriangles = getTransformedTargetSurfaceTriangles(settings)
+  const panelGrid = buildTargetPanelGridGeometries(transformedTriangles, settings)
+  loadedTargetSurface.panelGridLines.geometry.dispose()
+  loadedTargetSurface.panelGridLines.geometry = panelGrid.lines
+  loadedTargetSurface.panelGridMarkers.geometry.dispose()
+  loadedTargetSurface.panelGridMarkers.geometry = panelGrid.markers
+}
+
+function buildTargetPanelGridGeometries(
+  triangles: ReadonlyArray<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>,
+  settings: BatwingTargetSurfaceSettings,
+): { lines: THREE.BufferGeometry; markers: THREE.BufferGeometry } {
+  const parameterization = buildTargetSurfaceParameterization(triangles)
+  const size = computeTriangleSetBounds(triangles).getSize(new THREE.Vector3())
+  const linePositions: number[] = []
+  const markerPositions: number[] = []
+  const uCount = Math.max(1, Math.round(settings.uSubdivisions))
+  const vCount = Math.max(1, Math.round(settings.vSubdivisions))
+  const markerSize = Math.max(size.x, size.y, size.z, 1) / 95
+
+  const addMarkerX = (center: THREE.Vector3): void => {
+    const uArm = parameterization.uAxis.clone().multiplyScalar(markerSize)
+    const vArm = parameterization.vAxis.clone().multiplyScalar(markerSize)
+    const a = center.clone().sub(uArm).sub(vArm)
+    const b = center.clone().add(uArm).add(vArm)
+    const c = center.clone().sub(uArm).add(vArm)
+    const d = center.clone().add(uArm).sub(vArm)
+    markerPositions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, d.x, d.y, d.z)
+  }
+
+  const sampleOnSurface = (u: number, v: number): THREE.Vector3 => {
+    const sample = sampleTargetSurfaceParameterization(parameterization, u, v)
+    const visualLift = 0.02
+    return sample.position.clone().add(new THREE.Vector3(0, 0, settings.offset + visualLift))
+  }
+
+  for (let uIndex = 0; uIndex <= uCount; uIndex += 1) {
+    for (let vIndex = 0; vIndex <= vCount; vIndex += 1) {
+      addMarkerX(sampleOnSurface(uIndex / uCount, vIndex / vCount))
+    }
+  }
+
+  const lines = new THREE.BufferGeometry()
+  lines.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3))
+  lines.computeBoundingSphere()
+  const markers = new THREE.BufferGeometry()
+  markers.setAttribute('position', new THREE.Float32BufferAttribute(markerPositions, 3))
+  markers.computeBoundingSphere()
+  return { lines, markers }
+}
+
+function computeTriangleSetBounds(
+  triangles: ReadonlyArray<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>,
+): THREE.Box3 {
+  const bounds = new THREE.Box3()
+  for (const [a, b, c] of triangles) {
+    bounds.expandByPoint(a)
+    bounds.expandByPoint(b)
+    bounds.expandByPoint(c)
+  }
+  return bounds
+}
+
+function buildTargetSurfaceParameterization(
+  triangles: ReadonlyArray<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>,
+): TargetSurfaceParameterization {
+  const vertices = triangles.flatMap(([a, b, c]) => [a, b, c])
+  const origin = vertices.reduce((sum, vertex) => sum.add(vertex), new THREE.Vector3()).multiplyScalar(1 / Math.max(vertices.length, 1))
+  const covariance = buildPointCovarianceMatrix(vertices, origin)
+  const uAxis = getDominantCovarianceAxis(covariance, new THREE.Vector3(1, 0.37, 0.19))
+  const uEigenvalue = uAxis.dot(multiplySymmetricMatrixVector(covariance, uAxis))
+  const deflated = deflateSymmetricMatrix(covariance, uAxis, uEigenvalue)
+  let vAxis = getDominantCovarianceAxis(deflated, new THREE.Vector3(-0.23, 1, 0.41))
+  vAxis.addScaledVector(uAxis, -vAxis.dot(uAxis))
+  if (vAxis.lengthSq() <= 1e-10) {
+    vAxis.copy(getAnyPerpendicularUnitVector(uAxis))
+  } else {
+    vAxis.normalize()
+  }
+
+  let minU = Number.POSITIVE_INFINITY
+  let maxU = Number.NEGATIVE_INFINITY
+  let minV = Number.POSITIVE_INFINITY
+  let maxV = Number.NEGATIVE_INFINITY
+  const projectedTriangles: ProjectedTargetTriangle[] = []
+  for (const [a, b, c] of triangles) {
+    const auv = projectPointToTargetSurfaceFrame(a, origin, uAxis, vAxis)
+    const buv = projectPointToTargetSurfaceFrame(b, origin, uAxis, vAxis)
+    const cuv = projectPointToTargetSurfaceFrame(c, origin, uAxis, vAxis)
+    minU = Math.min(minU, auv.x, buv.x, cuv.x)
+    maxU = Math.max(maxU, auv.x, buv.x, cuv.x)
+    minV = Math.min(minV, auv.y, buv.y, cuv.y)
+    maxV = Math.max(maxV, auv.y, buv.y, cuv.y)
+    projectedTriangles.push({
+      a,
+      b,
+      c,
+      au: auv.x,
+      av: auv.y,
+      bu: buv.x,
+      bv: buv.y,
+      cu: cuv.x,
+      cv: cuv.y,
+      normal: THREE.Triangle.getNormal(a, b, c, new THREE.Vector3()),
+    })
+  }
+
+  return {
+    origin,
+    uAxis,
+    vAxis,
+    minU: Number.isFinite(minU) ? minU : 0,
+    maxU: Number.isFinite(maxU) ? maxU : 1,
+    minV: Number.isFinite(minV) ? minV : 0,
+    maxV: Number.isFinite(maxV) ? maxV : 1,
+    triangles: projectedTriangles,
+  }
+}
+
+function sampleTargetSurfaceParameterization(
+  parameterization: TargetSurfaceParameterization,
+  u: number,
+  v: number,
+): TargetSurfaceSample {
+  const targetU = parameterization.minU + (parameterization.maxU - parameterization.minU) * clampNumber(u, 0, 1)
+  const targetV = parameterization.minV + (parameterization.maxV - parameterization.minV) * clampNumber(v, 0, 1)
+  let nearestSample: TargetSurfaceSample | null = null
+  let nearestDistanceSquared = Number.POSITIVE_INFINITY
+
+  for (const triangle of parameterization.triangles) {
+    const barycentric = getProjectedTriangleBarycentric(targetU, targetV, triangle)
+    if (barycentric && barycentric.x >= -1e-5 && barycentric.y >= -1e-5 && barycentric.z >= -1e-5) {
+      return getProjectedTriangleSample(triangle, barycentric)
+    }
+
+    const closest = getClosestProjectedTriangleSample(targetU, targetV, triangle)
+    if (closest.distanceSquared < nearestDistanceSquared) {
+      nearestDistanceSquared = closest.distanceSquared
+      nearestSample = closest.sample
+    }
+  }
+
+  return nearestSample ?? { position: parameterization.origin.clone(), normal: new THREE.Vector3(0, 1, 0) }
+}
+
+function getProjectedTriangleBarycentric(
+  u: number,
+  v: number,
+  triangle: ProjectedTargetTriangle,
+): THREE.Vector3 | null {
+  const v0x = triangle.bu - triangle.au
+  const v0y = triangle.bv - triangle.av
+  const v1x = triangle.cu - triangle.au
+  const v1y = triangle.cv - triangle.av
+  const v2x = u - triangle.au
+  const v2y = v - triangle.av
+  const denominator = v0x * v1y - v1x * v0y
+  if (Math.abs(denominator) <= 1e-10) {
+    return null
+  }
+  const beta = (v2x * v1y - v1x * v2y) / denominator
+  const gamma = (v0x * v2y - v2x * v0y) / denominator
+  const alpha = 1 - beta - gamma
+  return new THREE.Vector3(alpha, beta, gamma)
+}
+
+function getProjectedTriangleSample(
+  triangle: ProjectedTargetTriangle,
+  barycentric: THREE.Vector3,
+): TargetSurfaceSample {
+  return {
+    position: triangle.a
+      .clone()
+      .multiplyScalar(barycentric.x)
+      .addScaledVector(triangle.b, barycentric.y)
+      .addScaledVector(triangle.c, barycentric.z),
+    normal: triangle.normal.clone(),
+  }
+}
+
+function getClosestProjectedTriangleSample(
+  u: number,
+  v: number,
+  triangle: ProjectedTargetTriangle,
+): { sample: TargetSurfaceSample; distanceSquared: number } {
+  const point = new THREE.Vector2(u, v)
+  const edges: Array<[[number, number], [number, number], [THREE.Vector3, THREE.Vector3]]> = [
+    [[triangle.au, triangle.av], [triangle.bu, triangle.bv], [triangle.a, triangle.b]],
+    [[triangle.bu, triangle.bv], [triangle.cu, triangle.cv], [triangle.b, triangle.c]],
+    [[triangle.cu, triangle.cv], [triangle.au, triangle.av], [triangle.c, triangle.a]],
+  ]
+  let bestPosition = triangle.a
+  let bestDistanceSquared = Number.POSITIVE_INFINITY
+
+  for (const [[au, av], [bu, bv], [a3, b3]] of edges) {
+    const a2 = new THREE.Vector2(au, av)
+    const b2 = new THREE.Vector2(bu, bv)
+    const edge = b2.clone().sub(a2)
+    const lengthSquared = Math.max(edge.lengthSq(), 1e-12)
+    const t = clampNumber(point.clone().sub(a2).dot(edge) / lengthSquared, 0, 1)
+    const closest2 = a2.lerp(b2, t)
+    const distanceSquared = closest2.distanceToSquared(point)
+    if (distanceSquared < bestDistanceSquared) {
+      bestDistanceSquared = distanceSquared
+      bestPosition = a3.clone().lerp(b3, t)
+    }
+  }
+
+  return {
+    sample: { position: bestPosition.clone(), normal: triangle.normal.clone() },
+    distanceSquared: bestDistanceSquared,
+  }
+}
+
+function buildPointCovarianceMatrix(vertices: readonly THREE.Vector3[], origin: THREE.Vector3): number[] {
+  const matrix = [0, 0, 0, 0, 0, 0]
+  for (const vertex of vertices) {
+    const x = vertex.x - origin.x
+    const y = vertex.y - origin.y
+    const z = vertex.z - origin.z
+    matrix[0] += x * x
+    matrix[1] += x * y
+    matrix[2] += x * z
+    matrix[3] += y * y
+    matrix[4] += y * z
+    matrix[5] += z * z
+  }
+  return matrix.map((value) => value / Math.max(vertices.length, 1))
+}
+
+function getDominantCovarianceAxis(matrix: readonly number[], seed: THREE.Vector3): THREE.Vector3 {
+  let axis = seed.clone().normalize()
+  for (let index = 0; index < 24; index += 1) {
+    const nextAxis = multiplySymmetricMatrixVector(matrix, axis)
+    if (nextAxis.lengthSq() <= 1e-14) {
+      return axis.lengthSq() > 1e-10 ? axis.normalize() : new THREE.Vector3(1, 0, 0)
+    }
+    axis = nextAxis.normalize()
+  }
+  return axis
+}
+
+function multiplySymmetricMatrixVector(matrix: readonly number[], vector: THREE.Vector3): THREE.Vector3 {
+  return new THREE.Vector3(
+    matrix[0] * vector.x + matrix[1] * vector.y + matrix[2] * vector.z,
+    matrix[1] * vector.x + matrix[3] * vector.y + matrix[4] * vector.z,
+    matrix[2] * vector.x + matrix[4] * vector.y + matrix[5] * vector.z,
+  )
+}
+
+function deflateSymmetricMatrix(matrix: readonly number[], axis: THREE.Vector3, eigenvalue: number): number[] {
+  return [
+    matrix[0] - eigenvalue * axis.x * axis.x,
+    matrix[1] - eigenvalue * axis.x * axis.y,
+    matrix[2] - eigenvalue * axis.x * axis.z,
+    matrix[3] - eigenvalue * axis.y * axis.y,
+    matrix[4] - eigenvalue * axis.y * axis.z,
+    matrix[5] - eigenvalue * axis.z * axis.z,
+  ]
+}
+
+function getAnyPerpendicularUnitVector(axis: THREE.Vector3): THREE.Vector3 {
+  const reference = Math.abs(axis.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)
+  return reference.cross(axis).normalize()
+}
+
+function projectPointToTargetSurfaceFrame(
+  point: THREE.Vector3,
+  origin: THREE.Vector3,
+  uAxis: THREE.Vector3,
+  vAxis: THREE.Vector3,
+): THREE.Vector2 {
+  const localPoint = point.clone().sub(origin)
+  return new THREE.Vector2(localPoint.dot(uAxis), localPoint.dot(vAxis))
+}
+
 function applyTargetSurfaceMapping(
   quadMesh: QuadMeshData,
   settings: BatwingTargetSurfaceSettings,
@@ -3107,81 +4255,29 @@ function applyTargetSurfaceMapping(
     return quadMesh
   }
   loadedTargetSurface.previewMesh.updateMatrixWorld(true)
-  const meshMatrix = loadedTargetSurface.previewMesh.matrixWorld.clone()
-  const targetScale = Math.max(settings.targetScale, 0.01)
   const blend = clampNumber(settings.blend, 0, 1)
   const offset = settings.offset
   const sourceBounds = computeQuadMeshBounds(quadMesh)
   const sourceSize = sourceBounds.getSize(new THREE.Vector3())
 
-  const transformedTriangles = loadedTargetSurface.triangles.map(([a, b, c]) => [
-    a.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
-    b.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
-    c.clone().multiplyScalar(targetScale).applyMatrix4(meshMatrix),
-  ] as [THREE.Vector3, THREE.Vector3, THREE.Vector3])
-  const targetBounds = new THREE.Box3()
-  for (const [a, b, c] of transformedTriangles) {
-    targetBounds.expandByPoint(a)
-    targetBounds.expandByPoint(b)
-    targetBounds.expandByPoint(c)
-  }
-  const targetSize = targetBounds.getSize(new THREE.Vector3())
-  const targetMin = targetBounds.min
+  const transformedTriangles = getTransformedTargetSurfaceTriangles(settings)
+  const parameterization = buildTargetSurfaceParameterization(transformedTriangles)
 
   const vertices = quadMesh.vertices.map((vertex) => {
     const nx = Math.abs(sourceSize.x) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.x - sourceBounds.min.x) / sourceSize.x, 0, 1)
     const ny = Math.abs(sourceSize.y) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.y - sourceBounds.min.y) / sourceSize.y, 0, 1)
     const nz = Math.abs(sourceSize.z) <= SCALE_EPSILON ? 0.5 : clampNumber((vertex.z - sourceBounds.min.z) / sourceSize.z, 0, 1)
-    const seedPoint = new THREE.Vector3(
-      targetMin.x + targetSize.x * nx,
-      targetMin.y + targetSize.y * ny,
-      targetMin.z + targetSize.z * nz,
-    )
-    const closest = getClosestPointOnTriangleSet(seedPoint, transformedTriangles)
-    const target = closest.position
-    const blended = vertex.clone().lerp(target, blend)
-    const normalDir = closest.normal.clone()
-    if (!Number.isFinite(normalDir.lengthSq()) || normalDir.lengthSq() <= 1e-12) {
-      return blended
-    }
-    return blended.addScaledVector(normalDir, offset)
+    const sample = sampleTargetSurfaceParameterization(parameterization, nx, nz)
+    const target = sample.position
+    const offsetAlpha = settings.offsetMode === 'one-sided' ? ny : ny - 0.5
+    const fieldTarget = target.clone().add(new THREE.Vector3(0, 0, offset * offsetAlpha))
+    return vertex.clone().lerp(fieldTarget, blend)
   })
 
   return {
     vertices,
     quadFaces: quadMesh.quadFaces,
   }
-}
-
-function getClosestPointOnTriangleSet(
-  point: THREE.Vector3,
-  triangles: ReadonlyArray<[THREE.Vector3, THREE.Vector3, THREE.Vector3]>,
-): { position: THREE.Vector3; normal: THREE.Vector3 } {
-  let bestDistanceSquared = Number.POSITIVE_INFINITY
-  let bestPoint = point.clone()
-  let bestNormal = new THREE.Vector3(0, 1, 0)
-  const tempClosest = new THREE.Vector3()
-  const tempNormal = new THREE.Vector3()
-  const tempTriangle = new THREE.Triangle()
-
-  for (const [a, b, c] of triangles) {
-    THREE.Triangle.getNormal(a, b, c, tempNormal)
-    tempTriangle.set(a, b, c)
-    tempTriangle.closestPointToPoint(point, tempClosest)
-    const distanceSquared = tempClosest.distanceToSquared(point)
-    if (distanceSquared < bestDistanceSquared) {
-      bestDistanceSquared = distanceSquared
-      bestPoint = tempClosest.clone()
-      bestNormal = tempNormal.clone()
-    }
-  }
-
-  if (bestNormal.lengthSq() <= 1e-12) {
-    bestNormal.set(0, 1, 0)
-  } else {
-    bestNormal.normalize()
-  }
-  return { position: bestPoint, normal: bestNormal }
 }
 
 async function loadTargetSurfaceFromInput(): Promise<void> {
@@ -3226,11 +4322,35 @@ async function loadTargetSurfaceFromInput(): Promise<void> {
   previewMesh.renderOrder = 1
   previewMesh.frustumCulled = false
   scene.add(previewMesh)
+  const panelGridLines = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      color: 0xffd47a,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  )
+  panelGridLines.renderOrder = 7
+  panelGridLines.frustumCulled = false
+  scene.add(panelGridLines)
+  const panelGridMarkers = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      color: 0xd00000,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  )
+  panelGridMarkers.renderOrder = 8
+  panelGridMarkers.frustumCulled = false
+  scene.add(panelGridMarkers)
 
   if (loadedTargetSurface) {
-    scene.remove(loadedTargetSurface.previewMesh)
-    loadedTargetSurface.previewMesh.geometry.dispose()
-    loadedTargetSurface.previewMesh.material.dispose()
+    disposeLoadedTargetSurface(loadedTargetSurface)
   }
 
   loadedTargetSurface = {
@@ -3238,6 +4358,8 @@ async function loadTargetSurfaceFromInput(): Promise<void> {
     triangles,
     bounds,
     previewMesh,
+    panelGridLines,
+    panelGridMarkers,
   }
   targetTransformControl.attach(previewMesh)
   targetTransformControl.enabled = true
@@ -3245,9 +4367,22 @@ async function loadTargetSurfaceFromInput(): Promise<void> {
   targetTransformControl.setMode('translate')
   snapTargetToBatwingBounds()
   syncTargetTransformInputsFromMesh()
+  updateTargetSurfaceVisualGuides()
   targetMappingEnabled = false
   geometry.dispose()
   rebuildBatwing()
+}
+
+function disposeLoadedTargetSurface(surface: LoadedTargetSurface): void {
+  scene.remove(surface.previewMesh)
+  surface.previewMesh.geometry.dispose()
+  surface.previewMesh.material.dispose()
+  scene.remove(surface.panelGridLines)
+  surface.panelGridLines.geometry.dispose()
+  surface.panelGridLines.material.dispose()
+  scene.remove(surface.panelGridMarkers)
+  surface.panelGridMarkers.geometry.dispose()
+  surface.panelGridMarkers.material.dispose()
 }
 
 function radiansToDegrees(value: number): number {
@@ -3302,6 +4437,7 @@ function applyTargetTransformFromInputs(): void {
   }
   mesh.updateMatrixWorld(true)
   syncTargetTransformInputsFromMesh()
+  updateTargetSurfaceVisualGuides()
   if (targetMappingEnabled) {
     rebuildBatwing()
   }
@@ -3327,6 +4463,7 @@ function snapTargetToBatwingBounds(): void {
   loadedTargetSurface.previewMesh.scale.setScalar(clampNumber(fitScale, 1e-4, 1e4))
   loadedTargetSurface.previewMesh.updateMatrixWorld(true)
   syncTargetTransformInputsFromMesh()
+  updateTargetSurfaceVisualGuides()
   if (targetMappingEnabled) {
     rebuildBatwing()
   }
@@ -3531,8 +4668,17 @@ function updateLatticeControlsVisibility(): void {
   if (latticePointMesh) {
     latticePointMesh.visible = visible
   }
+  if (latticeCornerPointMesh) {
+    latticeCornerPointMesh.visible = visible
+  }
   if (latticeHighlightPointMesh) {
     latticeHighlightPointMesh.visible = visible
+  }
+  if (latticeHoverPointMesh) {
+    latticeHoverPointMesh.visible = visible && hoveredLatticePointIndex !== null
+  }
+  if (latticePivotMesh) {
+    latticePivotMesh.visible = visible && selectedLatticePointIndices.size > 0
   }
   if (latticeLineSegments) {
     latticeLineSegments.visible = visible
@@ -3546,14 +4692,29 @@ function refreshLatticePointMesh(): void {
     return
   }
 
-  if (!latticePointMesh || !latticeHighlightPointMesh || latticePointMesh.count !== latticeState.points.length) {
+  if (
+    !latticePointMesh ||
+    !latticeCornerPointMesh ||
+    !latticeHighlightPointMesh ||
+    !latticeHoverPointMesh ||
+    !latticePivotMesh ||
+    latticePointMesh.count !== latticeState.points.length
+  ) {
     disposeLatticePointMesh()
     const pointMaterial = new THREE.MeshBasicMaterial({
       color: LATTICE_COLOR,
       depthTest: false,
       depthWrite: false,
       transparent: true,
-      opacity: 1,
+      opacity: 0.46,
+      toneMapped: false,
+    })
+    const cornerMaterial = new THREE.MeshBasicMaterial({
+      color: LATTICE_CORNER_COLOR,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.34,
       toneMapped: false,
     })
     const highlightMaterial = new THREE.MeshBasicMaterial({
@@ -3561,7 +4722,23 @@ function refreshLatticePointMesh(): void {
       depthTest: false,
       depthWrite: false,
       transparent: true,
-      opacity: 1,
+      opacity: 0.72,
+      toneMapped: false,
+    })
+    const hoverMaterial = new THREE.MeshBasicMaterial({
+      color: LATTICE_HOVER_COLOR,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.84,
+      toneMapped: false,
+    })
+    const pivotMaterial = new THREE.MeshBasicMaterial({
+      color: LATTICE_PIVOT_COLOR,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.92,
       toneMapped: false,
     })
 
@@ -3570,46 +4747,121 @@ function refreshLatticePointMesh(): void {
       pointMaterial,
       latticeState.points.length,
     )
+    latticeCornerPointMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.82, 0.82, 0.82),
+      cornerMaterial,
+      latticeState.points.length,
+    )
     latticeHighlightPointMesh = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(1, 12, 8),
+      new THREE.SphereGeometry(1, 20, 12),
       highlightMaterial,
       latticeState.points.length,
     )
+    latticeHoverPointMesh = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 20, 12),
+      hoverMaterial,
+      1,
+    )
+    latticePivotMesh = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), pivotMaterial)
     latticePointMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    latticeCornerPointMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
     latticeHighlightPointMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    latticeHoverPointMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
     latticePointMesh.frustumCulled = false
+    latticeCornerPointMesh.frustumCulled = false
     latticeHighlightPointMesh.frustumCulled = false
+    latticeHoverPointMesh.frustumCulled = false
+    latticePivotMesh.frustumCulled = false
     latticePointMesh.renderOrder = 7
+    latticeCornerPointMesh.renderOrder = 7
     latticeHighlightPointMesh.renderOrder = 8
+    latticeHoverPointMesh.renderOrder = 9
+    latticePivotMesh.renderOrder = 9
     scene.add(latticePointMesh)
+    scene.add(latticeCornerPointMesh)
     scene.add(latticeHighlightPointMesh)
+    scene.add(latticeHoverPointMesh)
+    scene.add(latticePivotMesh)
   }
 
   const displayScale = getLatticePointDisplayScale()
   let highlightCount = 0
+  let cornerCount = 0
+  latticeCornerPointIndices = []
+  const hoverPoint = hoveredLatticePointIndex === null ? null : latticeState.points[hoveredLatticePointIndex] ?? null
   for (const point of latticeState.points) {
+    const isCornerPoint = isLatticeCornerPoint(point, latticeState)
     latticeMatrixHelper.position.copy(point.position)
     latticeMatrixHelper.rotation.set(0, 0, 0)
-    latticeMatrixHelper.scale.setScalar(displayScale)
+    latticeMatrixHelper.scale.setScalar(isCornerPoint ? 0.001 : displayScale)
     latticeMatrixHelper.updateMatrix()
     latticePointMesh.setMatrixAt(point.index, latticeMatrixHelper.matrix)
-    if (selectedLatticePointIndices.has(point.index) || hoveredLatticePointIndex === point.index) {
-      latticeMatrixHelper.scale.setScalar(displayScale * 1.1)
+
+    if (isCornerPoint) {
+      latticeMatrixHelper.scale.setScalar(displayScale * 0.72)
+      latticeMatrixHelper.updateMatrix()
+      latticeCornerPointMesh.setMatrixAt(cornerCount, latticeMatrixHelper.matrix)
+      latticeCornerPointIndices[cornerCount] = point.index
+      cornerCount += 1
+    }
+
+    if (selectedLatticePointIndices.has(point.index)) {
+      latticeMatrixHelper.scale.setScalar(displayScale * 1.25)
       latticeMatrixHelper.updateMatrix()
       latticeHighlightPointMesh.setMatrixAt(highlightCount, latticeMatrixHelper.matrix)
       highlightCount += 1
     }
   }
 
+  if (hoverPoint) {
+    latticeMatrixHelper.position.copy(hoverPoint.position)
+    latticeMatrixHelper.rotation.set(0, 0, 0)
+    latticeMatrixHelper.scale.setScalar(displayScale * 1.14)
+    latticeMatrixHelper.updateMatrix()
+    latticeHoverPointMesh.setMatrixAt(0, latticeMatrixHelper.matrix)
+    latticeHoverPointMesh.count = 1
+  } else {
+    latticeHoverPointMesh.count = 0
+  }
+
+  const pivot = getSelectedLatticeAverage()
+  if (pivot) {
+    latticePivotMesh.position.copy(pivot)
+    latticePivotMesh.rotation.set(0, Math.PI / 4, 0)
+    latticePivotMesh.scale.setScalar(displayScale * 1.18)
+    latticePivotMesh.visible = isLatticeControlsVisible()
+  } else {
+    latticePivotMesh.visible = false
+  }
+
+  latticeCornerPointMesh.count = cornerCount
   latticeHighlightPointMesh.count = highlightCount
   latticePointMesh.visible = isLatticeControlsVisible()
+  latticeCornerPointMesh.visible = isLatticeControlsVisible()
   latticeHighlightPointMesh.visible = isLatticeControlsVisible()
+  latticeHoverPointMesh.visible = isLatticeControlsVisible() && hoverPoint !== null
   latticePointMesh.instanceMatrix.needsUpdate = true
+  latticeCornerPointMesh.instanceMatrix.needsUpdate = true
   latticeHighlightPointMesh.instanceMatrix.needsUpdate = true
+  latticeHoverPointMesh.instanceMatrix.needsUpdate = true
   latticePointMesh.computeBoundingSphere()
   latticePointMesh.computeBoundingBox()
+  latticeCornerPointMesh.computeBoundingSphere()
+  latticeCornerPointMesh.computeBoundingBox()
   latticeHighlightPointMesh.computeBoundingSphere()
   latticeHighlightPointMesh.computeBoundingBox()
+  latticeHoverPointMesh.computeBoundingSphere()
+  latticeHoverPointMesh.computeBoundingBox()
+}
+
+function isLatticeCornerPoint(point: LatticePoint, state: LatticeState): boolean {
+  const maxWidthIndex = getLatticeWidthPointCount(state.settings) - 1
+  const maxHeightIndex = getLatticeHeightPointCount(state.settings) - 1
+  const maxLengthIndex = getLatticeLengthPointCount(state.settings) - 1
+  const atWidthBoundary = point.widthIndex === 0 || point.widthIndex === maxWidthIndex
+  const atHeightBoundary = point.heightIndex === 0 || point.heightIndex === maxHeightIndex
+  const atLengthBoundary = point.lengthIndex === 0 || point.lengthIndex === maxLengthIndex
+  return atWidthBoundary && atHeightBoundary && atLengthBoundary
 }
 
 function refreshLatticeLineSegments(): void {
@@ -3697,11 +4949,32 @@ function disposeLatticePointMesh(): void {
     latticePointMesh = null
   }
 
+  if (latticeCornerPointMesh) {
+    scene.remove(latticeCornerPointMesh)
+    latticeCornerPointMesh.geometry.dispose()
+    latticeCornerPointMesh.material.dispose()
+    latticeCornerPointMesh = null
+  }
+
   if (latticeHighlightPointMesh) {
     scene.remove(latticeHighlightPointMesh)
     latticeHighlightPointMesh.geometry.dispose()
     latticeHighlightPointMesh.material.dispose()
     latticeHighlightPointMesh = null
+  }
+
+  if (latticeHoverPointMesh) {
+    scene.remove(latticeHoverPointMesh)
+    latticeHoverPointMesh.geometry.dispose()
+    latticeHoverPointMesh.material.dispose()
+    latticeHoverPointMesh = null
+  }
+
+  if (latticePivotMesh) {
+    scene.remove(latticePivotMesh)
+    latticePivotMesh.geometry.dispose()
+    latticePivotMesh.material.dispose()
+    latticePivotMesh = null
   }
 }
 
@@ -3773,6 +5046,7 @@ function selectSingleLatticePoint(index: number, mode: LatticeSelectionMode): vo
   if (mode === 'remove') {
     selectedLatticePointIndices.delete(index)
     refreshLatticeVisuals()
+    updateSelectionStatusHint()
     return
   }
 
@@ -3787,6 +5061,7 @@ function selectSingleLatticePoint(index: number, mode: LatticeSelectionMode): vo
   }
 
   refreshLatticeVisuals()
+  updateSelectionStatusHint()
 }
 
 function selectLatticePoints(indices: readonly number[], mode: LatticeSelectionMode): void {
@@ -3795,6 +5070,7 @@ function selectLatticePoints(indices: readonly number[], mode: LatticeSelectionM
       selectedLatticePointIndices.delete(index)
     }
     refreshLatticeVisuals()
+    updateSelectionStatusHint()
     return
   }
 
@@ -3807,6 +5083,7 @@ function selectLatticePoints(indices: readonly number[], mode: LatticeSelectionM
   }
 
   refreshLatticeVisuals()
+  updateSelectionStatusHint()
 }
 
 function clearLatticeSelection(): void {
@@ -3816,6 +5093,7 @@ function clearLatticeSelection(): void {
 
   selectedLatticePointIndices.clear()
   refreshLatticeVisuals()
+  updateSelectionStatusHint()
 }
 
 function onLatticePointerDown(event: PointerEvent): void {
@@ -3872,6 +5150,7 @@ function updateLatticeHover(event: PointerEvent): void {
   }
 
   const hitIndex = pickLatticePoint(event)
+  updateLatticeTooltip(hitIndex, event)
   if (hoveredLatticePointIndex === hitIndex) {
     return
   }
@@ -3881,12 +5160,43 @@ function updateLatticeHover(event: PointerEvent): void {
 }
 
 function clearLatticeHover(): void {
+  latticeTooltip.hidden = true
+  canvas.style.cursor = ''
+  updateSelectionStatusHint()
   if (hoveredLatticePointIndex === null) {
     return
   }
 
   hoveredLatticePointIndex = null
   refreshLatticePointMesh()
+}
+
+function updateLatticeTooltip(index: number | null, event: PointerEvent): void {
+  if (index === null || !latticeState) {
+    latticeTooltip.hidden = true
+    canvas.style.cursor = ''
+    updateSelectionStatusHint()
+    return
+  }
+
+  const point = latticeState.points[index]
+  if (!point) {
+    latticeTooltip.hidden = true
+    canvas.style.cursor = ''
+    updateSelectionStatusHint()
+    return
+  }
+
+  const role = isLatticeCornerPoint(point, latticeState) ? 'Corner handle' : 'Lattice handle'
+  const selection = selectedLatticePointIndices.has(index) ? 'selected' : 'drag target'
+  latticeTooltip.textContent = `${role} ${index + 1} · ${selection}`
+  latticeTooltip.style.left = `${event.clientX + 14}px`
+  latticeTooltip.style.top = `${event.clientY + 14}px`
+  latticeTooltip.hidden = false
+  canvas.style.cursor = 'pointer'
+  setViewportStatus(role, selectedLatticePointIndices.has(index)
+    ? 'This handle is selected. Drag an axis gizmo to transform the selected group.'
+    : 'Click to select this handle. Shift-click adds to the selection.')
 }
 
 function onLatticePointerUp(event: PointerEvent): void {
@@ -3932,6 +5242,14 @@ function pickLatticePoint(event: PointerEvent): number | null {
 
   setPointerFromEvent(event)
   latticeRaycaster.setFromCamera(latticePointer, camera)
+  if (latticeCornerPointMesh) {
+    const cornerHits = latticeRaycaster.intersectObject(latticeCornerPointMesh, false)
+    const cornerHit = cornerHits.find((candidate) => typeof candidate.instanceId === 'number')
+    if (cornerHit?.instanceId !== undefined) {
+      return latticeCornerPointIndices[cornerHit.instanceId] ?? null
+    }
+  }
+
   const hits = latticeRaycaster.intersectObject(latticePointMesh, false)
   const hit = hits.find((candidate) => typeof candidate.instanceId === 'number')
   if (hit?.instanceId === undefined || hit.instanceId < 0 || hit.instanceId >= latticeState.points.length) {
@@ -3992,15 +5310,24 @@ function buildSubdividedWeldedArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
-  const weldedMesh = buildWeldedArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings)
+  const weldedMesh = buildWeldedArrayQuadMesh(
+    geometryType,
+    batwingFamily,
+    settings,
+    arraySettings,
+    aggregatorSettings,
+    symmetrySettings,
+  )
   return weldQuadMeshByPositionPreservingFaceDirections(subdivideCatmullClark(weldedMesh, arraySettings.subdivisions))
 }
 
 function buildFinalDisplayQuadMesh(
   mappedQuadMesh: QuadMeshData,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
   depthGradientSettings: BatwingDepthGradientSettings,
   offsetMode: BatwingTargetSurfaceSettings['offsetMode'],
 ): QuadMeshData {
@@ -4008,7 +5335,7 @@ function buildFinalDisplayQuadMesh(
   const thickenedMesh = createThickenedQuadMesh(
     mappedQuadMesh,
     arraySettings.thickness,
-    buildArrayCenterThicknessNormalMap(arraySettings),
+    buildArrayCenterThicknessNormalMap(arraySettings, aggregatorSettings),
     depthThicknessScaleMap,
     offsetMode,
   )
@@ -4020,10 +5347,18 @@ function buildWeldedArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   return weldQuadMeshByPositionPreservingFaceDirections(
-    buildCheckerboardArrayQuadMesh(geometryType, batwingFamily, settings, arraySettings, symmetrySettings),
+    buildCheckerboardArrayQuadMesh(
+      geometryType,
+      batwingFamily,
+      settings,
+      arraySettings,
+      aggregatorSettings,
+      symmetrySettings,
+    ),
   )
 }
 
@@ -4032,6 +5367,7 @@ function buildCheckerboardArrayQuadMesh(
   batwingFamily: BatwingFamilyType,
   settings: BatwingSettings,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
   symmetrySettings: BatwingSymmetrySettings,
 ): QuadMeshData {
   const baseMesh = buildTpmsQuadMeshData(settings, geometryType, batwingFamily)
@@ -4039,26 +5375,26 @@ function buildCheckerboardArrayQuadMesh(
   const quadFaces: QuadFace[] = []
   const symmetryTransforms = buildSymmetryTransforms(symmetrySettings)
 
-  forEachArrayOffset(arraySettings, (offset, _instanceIndex, lengthIndex, widthIndex, heightIndex) => {
+  for (const cell of getAggregateArrayCells(arraySettings, aggregatorSettings)) {
     for (const transform of symmetryTransforms) {
       const transformedVertices = baseMesh.vertices.map((vertex) => applySymmetryTransform(vertex, transform))
       const normalizedVertices = normalizeVerticesToCellBounds(transformedVertices)
       const vertexOffset = vertices.length
       for (const vertex of normalizedVertices) {
-        vertices.push(vertex.clone().add(offset))
+        vertices.push(vertex.clone().add(cell.offset))
       }
 
       const flipWinding = shouldFlipArrayCellWindingForGeometry(
         geometryType,
-        lengthIndex,
-        widthIndex,
-        heightIndex,
+        cell.lengthIndex,
+        cell.widthIndex,
+        cell.heightIndex,
       )
       for (const baseFace of baseMesh.quadFaces) {
         quadFaces.push(offsetQuadFace(flipWinding ? reverseQuadFace(baseFace) : baseFace, vertexOffset))
       }
     }
-  })
+  }
 
   return {
     vertices,
@@ -4215,12 +5551,15 @@ function offsetQuadFace([a, b, c, d]: QuadFace, vertexOffset: number): QuadFace 
   return [vertexOffset + a, vertexOffset + b, vertexOffset + c, vertexOffset + d]
 }
 
-function buildArrayCenterThicknessNormalMap(arraySettings: BatwingArraySettings): Map<string, THREE.Vector3> {
+function buildArrayCenterThicknessNormalMap(
+  arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
+): Map<string, THREE.Vector3> {
   const centerNormals = new Map<string, THREE.Vector3>()
-  forEachArrayOffset(arraySettings, (offset, _instanceIndex, lengthIndex, widthIndex, heightIndex) => {
-    const yDirection = shouldFlipArrayCellWinding(lengthIndex, widthIndex, heightIndex) ? -1 : 1
-    centerNormals.set(getWeldKey(offset.x, offset.y, offset.z), new THREE.Vector3(0, yDirection, 0))
-  })
+  for (const cell of getAggregateArrayCells(arraySettings, aggregatorSettings)) {
+    const yDirection = shouldFlipArrayCellWinding(cell.lengthIndex, cell.widthIndex, cell.heightIndex) ? -1 : 1
+    centerNormals.set(getWeldKey(cell.offset.x, cell.offset.y, cell.offset.z), new THREE.Vector3(0, yDirection, 0))
+  }
   return centerNormals
 }
 
@@ -4285,6 +5624,7 @@ function createThickenedQuadMesh(
 function buildGeometryFromQuadMesh(
   quadMesh: QuadMeshData,
   arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
 ): THREE.BufferGeometry {
   validateFiniteVertices(quadMesh.vertices)
 
@@ -4305,11 +5645,11 @@ function buildGeometryFromQuadMesh(
   geometry.computeBoundingSphere()
   geometry.userData.batwing = {
     welded: true,
-    rawVertexCount: getArrayInstanceCount(arraySettings) * 33,
+    rawVertexCount: getActiveArrayInstanceCount(arraySettings, aggregatorSettings) * 33,
     vertexCount: quadMesh.vertices.length,
     indexCount: indices.length,
     quadCount: quadMesh.quadFaces.length,
-    instanceCount: getArrayInstanceCount(arraySettings),
+    instanceCount: getActiveArrayInstanceCount(arraySettings, aggregatorSettings),
     thickness: arraySettings.thickness,
     subdivisions: arraySettings.subdivisions,
   }
@@ -4727,9 +6067,12 @@ function validateFiniteVertices(vertices: readonly THREE.Vector3[]): void {
   }
 }
 
-function buildArrayBoxGuideGeometry(arraySettings: BatwingArraySettings): THREE.BufferGeometry {
+function buildArrayBoxGuideGeometry(
+  arraySettings: BatwingArraySettings,
+  aggregatorSettings: BatwingAggregatorSettings,
+): THREE.BufferGeometry {
   const baseGeometry = createBatwingBoxGuideGeometry()
-  const geometry = buildArrayLineGeometry(baseGeometry, arraySettings)
+  const geometry = buildArrayLineGeometry(baseGeometry, arraySettings, aggregatorSettings)
   baseGeometry.dispose()
   return geometry
 }
@@ -4758,6 +6101,61 @@ function applyMaterialStyle(style: BatwingMaterialStyle): void {
   batwingMesh.material.needsUpdate = true
 }
 
+function getCurrentViewportDisplayMode(): ViewportDisplayMode {
+  if (
+    viewportModeSelect.value === 'solid' ||
+    viewportModeSelect.value === 'wire' ||
+    viewportModeSelect.value === 'uv-map'
+  ) {
+    return viewportModeSelect.value
+  }
+  return 'gloss'
+}
+
+function applyViewportDisplayMode(mode: ViewportDisplayMode, updateControls = true): void {
+  viewportModeSelect.value = mode
+  batwingMesh.visible = mode !== 'wire'
+  batwingMesh.material.transparent = false
+  batwingMesh.material.opacity = 1
+
+  if (mode === 'gloss') {
+    if (updateControls) {
+      reflectionToggle.checked = true
+    }
+    applyMaterialStyle(FOIL_MATERIAL_STYLE)
+    wireOverlay.visible = wireToggle.checked
+    seamDebugPoints.visible = seamDebugToggle.checked
+  } else if (mode === 'solid') {
+    if (updateControls) {
+      reflectionToggle.checked = false
+      wireToggle.checked = true
+    }
+    applyMaterialStyle(MATTE_MATERIAL_STYLE)
+    wireOverlay.visible = true
+    seamDebugPoints.visible = seamDebugToggle.checked
+  } else if (mode === 'wire') {
+    if (updateControls) {
+      reflectionToggle.checked = false
+      wireToggle.checked = true
+    }
+    applyMaterialStyle(MATTE_MATERIAL_STYLE)
+    wireOverlay.visible = true
+    seamDebugPoints.visible = seamDebugToggle.checked
+  } else {
+    if (updateControls) {
+      reflectionToggle.checked = false
+      wireToggle.checked = true
+      seamDebugToggle.checked = true
+    }
+    applyMaterialStyle(MATTE_MATERIAL_STYLE)
+    batwingMesh.material.color.set(0xbdd7ff)
+    wireOverlay.visible = true
+    seamDebugPoints.visible = true
+  }
+
+  batwingMesh.material.needsUpdate = true
+}
+
 function normalizeColorInputHex(value: string, fallbackHex: string): string {
   const match = /^#[0-9a-fA-F]{6}$/.exec(value)
   if (match) {
@@ -4771,6 +6169,9 @@ function applyFoilColorFromHex(hex: string): void {
   foilColorInput.value = normalized
   userFoilColor.set(normalized)
   batwingMesh.material.color.copy(userFoilColor)
+  if (getCurrentViewportDisplayMode() === 'uv-map') {
+    batwingMesh.material.color.set(0xbdd7ff)
+  }
   batwingMesh.material.needsUpdate = true
 }
 
@@ -5148,6 +6549,154 @@ function updatePanelSectionControls(): void {
   })
 }
 
+function updatePanelTabs(): void {
+  const tabButtons = app.querySelectorAll<HTMLButtonElement>('[data-panel-tab-button]')
+  const tabSections = app.querySelectorAll<HTMLElement>('[data-panel-tab]')
+
+  tabButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const activeTab = button.dataset.panelTabButton
+      if (!activeTab) {
+        return
+      }
+
+      tabButtons.forEach((tabButton) => {
+        const isActive = tabButton === button
+        tabButton.classList.toggle('is-active', isActive)
+        tabButton.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+      })
+
+      tabSections.forEach((section) => {
+        section.hidden = section.dataset.panelTab !== activeTab
+      })
+    })
+  })
+}
+
+function setViewportStatus(label: string, message: string): void {
+  viewportStatus.dataset.statusLabel = label
+  const labelElement = viewportStatus.querySelector<HTMLElement>('.viewport-status-label')
+  if (labelElement) {
+    labelElement.textContent = label
+  }
+  viewportStatusMessage.textContent = message
+}
+
+function resetViewportStatus(): void {
+  setViewportStatus('Orbit', DEFAULT_STATUS_MESSAGE)
+}
+
+function updateSelectionStatusHint(): void {
+  const count = selectedLatticePointIndices.size
+  if (count > 0) {
+    setViewportStatus('Selection', `${count} lattice handle${count === 1 ? '' : 's'} selected. Drag an axis gizmo to move, rotate, or scale.`)
+    return
+  }
+  resetViewportStatus()
+}
+
+function getControlStatusHint(target: EventTarget | null): { label: string; message: string } | null {
+  if (!(target instanceof HTMLElement)) {
+    return null
+  }
+
+  const section = target.closest<HTMLElement>('.panel-section')
+  const sectionLabel = section?.querySelector<HTMLElement>('.panel-section-label')?.textContent?.trim() ?? 'Control'
+  const control = target.closest<HTMLElement>('.control, .toggle-control, .panel-tab-button, .pill-button')
+  const controlText = control?.textContent?.replace(/\s+/g, ' ').trim()
+
+  if (target instanceof HTMLInputElement && target.type === 'range') {
+    return { label: sectionLabel, message: `Drag ${controlText ?? 'this slider'} to update the surface preview.` }
+  }
+
+  if (target instanceof HTMLInputElement && target.type === 'number') {
+    return { label: sectionLabel, message: `Type a value for ${controlText ?? 'this setting'}, then press Enter to apply.` }
+  }
+
+  if (target instanceof HTMLSelectElement) {
+    return { label: sectionLabel, message: `Choose a ${controlText ?? 'mode'} preset from the menu.` }
+  }
+
+  if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+    return { label: sectionLabel, message: `Toggle ${controlText ?? 'this layer'} in the viewport.` }
+  }
+
+  if (target instanceof HTMLButtonElement) {
+    return { label: sectionLabel, message: controlText ? `${controlText}.` : 'Run this command.' }
+  }
+
+  if (controlText) {
+    return { label: sectionLabel, message: controlText }
+  }
+
+  return null
+}
+
+function updateControlStatusHint(target: EventTarget | null): void {
+  const hint = getControlStatusHint(target)
+  if (!hint) {
+    return
+  }
+  setViewportStatus(hint.label, hint.message)
+}
+
+function enableContextualStatusHints(): void {
+  uiPanel.addEventListener('focusin', (event) => {
+    updateControlStatusHint(event.target)
+  })
+  uiPanel.addEventListener('focusout', () => {
+    updateSelectionStatusHint()
+  })
+  uiPanel.addEventListener('pointerover', (event) => {
+    updateControlStatusHint(event.target)
+  })
+  uiPanel.addEventListener('pointerout', (event) => {
+    if (!(event.relatedTarget instanceof Node) || !uiPanel.contains(event.relatedTarget)) {
+      updateSelectionStatusHint()
+    }
+  })
+}
+
+function setButtonLoading(button: HTMLButtonElement, loading: boolean): void {
+  button.classList.toggle('is-loading', loading)
+  button.disabled = loading
+  button.setAttribute('aria-busy', loading ? 'true' : 'false')
+}
+
+function runWithButtonLoading(button: HTMLButtonElement, action: () => void | Promise<void>): void {
+  setButtonLoading(button, true)
+  void Promise.resolve()
+    .then(action)
+    .finally(() => {
+      window.setTimeout(() => {
+        setButtonLoading(button, false)
+      }, 180)
+    })
+}
+
+function setActiveTargetTransformButton(activeButton: HTMLButtonElement): void {
+  for (const button of [targetMoveModeButton, targetRotateModeButton, targetScaleModeButton]) {
+    const isActive = button === activeButton
+    button.classList.toggle('is-active', isActive)
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+  }
+}
+
+function updateTargetTransformButtonAvailability(): void {
+  const enabled = loadedTargetSurface !== null
+  for (const button of [targetMoveModeButton, targetRotateModeButton, targetScaleModeButton]) {
+    button.disabled = !enabled
+    button.classList.toggle('is-disabled', !enabled)
+  }
+
+  if (!enabled) {
+    for (const button of [targetMoveModeButton, targetRotateModeButton, targetScaleModeButton]) {
+      button.classList.remove('is-active')
+      button.setAttribute('aria-pressed', 'false')
+    }
+  }
+}
+
 function enablePerSectionScrolling(): void {
   const contents = app.querySelectorAll<HTMLElement>('.panel-section-content')
   contents.forEach((content) => {
@@ -5198,9 +6747,7 @@ function cleanup(): void {
   boxGuide.geometry.dispose()
   boxGuide.material.dispose()
   if (loadedTargetSurface) {
-    scene.remove(loadedTargetSurface.previewMesh)
-    loadedTargetSurface.previewMesh.geometry.dispose()
-    loadedTargetSurface.previewMesh.material.dispose()
+    disposeLoadedTargetSurface(loadedTargetSurface)
   }
   seamDebugPoints.geometry.dispose()
   seamDebugPoints.material.dispose()
@@ -5216,6 +6763,11 @@ for (const binding of sliderBindings) {
 
 for (const binding of arraySliderBindings) {
   bindArraySlider(binding)
+  updateRangeProgress(binding.slider)
+}
+
+for (const binding of aggregatorSliderBindings) {
+  bindAggregatorSlider(binding)
   updateRangeProgress(binding.slider)
 }
 
@@ -5246,6 +6798,10 @@ for (const binding of targetSurfaceSliderBindings) {
 
 geometryTypeSelect.value = DEFAULT_GEOMETRY_TYPE
 batwingFamilySelect.value = DEFAULT_BATWING_FAMILY
+viewportModeSelect.value = DEFAULT_VIEWPORT_DISPLAY_MODE
+aggregatorToggle.checked = DEFAULT_AGGREGATOR_SETTINGS.enabled
+growthModeSelect.value = DEFAULT_AGGREGATOR_SETTINGS.growthMode
+adjacencyRuleSelect.value = DEFAULT_AGGREGATOR_SETTINGS.adjacencyRule
 updateBatwingFamilyControlAvailability(DEFAULT_GEOMETRY_TYPE)
 geometryTypeSelect.addEventListener('pointerdown', () => {
   geometryTypeBeforeEdit = getCurrentGeometryType()
@@ -5276,14 +6832,67 @@ batwingFamilySelect.addEventListener('change', () => {
   commitHistoryCheckpoint(previousState)
   batwingFamilyBeforeEdit = null
 })
+aggregatorToggle.addEventListener('change', () => {
+  const previousState = captureAppState()
+  previousState.aggregatorSettings.enabled = !aggregatorToggle.checked
+  ensureAggregateFieldCapacity()
+  rebuildBatwing()
+  commitHistoryCheckpoint(previousState)
+})
+growthModeSelect.addEventListener('pointerdown', () => {
+  growthModeBeforeEdit = getCurrentAggregatorGrowthMode()
+})
+growthModeSelect.addEventListener('focus', () => {
+  growthModeBeforeEdit = getCurrentAggregatorGrowthMode()
+})
+growthModeSelect.addEventListener('change', () => {
+  const previousGrowthMode = growthModeBeforeEdit ?? DEFAULT_AGGREGATOR_SETTINGS.growthMode
+  const previousState = captureAppState()
+  previousState.aggregatorSettings.growthMode = previousGrowthMode
+  rebuildBatwing()
+  commitHistoryCheckpoint(previousState)
+  growthModeBeforeEdit = null
+})
+adjacencyRuleSelect.addEventListener('pointerdown', () => {
+  adjacencyRuleBeforeEdit = getCurrentAggregatorAdjacencyRule()
+})
+adjacencyRuleSelect.addEventListener('focus', () => {
+  adjacencyRuleBeforeEdit = getCurrentAggregatorAdjacencyRule()
+})
+adjacencyRuleSelect.addEventListener('change', () => {
+  const previousAdjacencyRule = adjacencyRuleBeforeEdit ?? DEFAULT_AGGREGATOR_SETTINGS.adjacencyRule
+  const previousState = captureAppState()
+  previousState.aggregatorSettings.adjacencyRule = previousAdjacencyRule
+  ensureAggregateFieldCapacity()
+  rebuildBatwing()
+  commitHistoryCheckpoint(previousState)
+  adjacencyRuleBeforeEdit = null
+})
+populateAggregateButton.addEventListener('click', () => {
+  const previousState = captureAppState()
+  const seedBinding = aggregatorSliderBindings.find((binding) => binding.key === 'seed')
+  if (!seedBinding) {
+    return
+  }
+  const currentSeed = readAggregatorSliderNumber(seedBinding)
+  const nextSeed = currentSeed >= MAX_AGGREGATE_SEED ? 1 : currentSeed + 1
+  aggregatorToggle.checked = true
+  seedBinding.slider.value = `${nextSeed}`
+  seedBinding.valueInput.value = formatAggregatorSliderValue(seedBinding, nextSeed)
+  updateRangeProgress(seedBinding.slider)
+  ensureAggregateFieldCapacity()
+  rebuildBatwing()
+  commitHistoryCheckpoint(previousState)
+})
 loadTargetSurfaceButton.addEventListener('click', () => {
-  void loadTargetSurfaceFromInput()
+  runWithButtonLoading(loadTargetSurfaceButton, async () => {
+    await loadTargetSurfaceFromInput()
+    updateTargetTransformButtonAvailability()
+  })
 })
 clearTargetSurfaceButton.addEventListener('click', () => {
   if (loadedTargetSurface) {
-    scene.remove(loadedTargetSurface.previewMesh)
-    loadedTargetSurface.previewMesh.geometry.dispose()
-    loadedTargetSurface.previewMesh.material.dispose()
+    disposeLoadedTargetSurface(loadedTargetSurface)
   }
   loadedTargetSurface = null
   targetMappingEnabled = false
@@ -5292,6 +6901,7 @@ clearTargetSurfaceButton.addEventListener('click', () => {
   targetTransformHelper.visible = false
   targetSurfaceFileInput.value = ''
   syncTargetTransformInputsFromMesh()
+  updateTargetTransformButtonAvailability()
   rebuildBatwing()
 })
 snapTargetToBatwingButton.addEventListener('click', () => {
@@ -5304,6 +6914,11 @@ mapTargetButton.addEventListener('click', () => {
   targetMappingEnabled = true
   rebuildBatwing()
 })
+applySurfaceFieldButton.addEventListener('click', () => {
+  const previousState = captureAppState()
+  applySurfaceFieldSettings()
+  commitHistoryCheckpoint(previousState)
+})
 unmapTargetButton.addEventListener('click', () => {
   targetMappingEnabled = false
   rebuildBatwing()
@@ -5313,23 +6928,27 @@ targetMoveModeButton.addEventListener('click', () => {
     return
   }
   targetTransformControl.setMode('translate')
+  setActiveTargetTransformButton(targetMoveModeButton)
 })
 targetRotateModeButton.addEventListener('click', () => {
   if (!loadedTargetSurface) {
     return
   }
   targetTransformControl.setMode('rotate')
+  setActiveTargetTransformButton(targetRotateModeButton)
 })
 targetScaleModeButton.addEventListener('click', () => {
   if (!loadedTargetSurface) {
     return
   }
   targetTransformControl.setMode('scale')
+  setActiveTargetTransformButton(targetScaleModeButton)
 })
 targetOffsetModeSelect.addEventListener('change', () => {
   const previousState = captureAppState()
   previousState.targetSurfaceSettings.offsetMode =
     targetOffsetModeSelect.value === 'one-sided' ? 'two-sided' : 'one-sided'
+  updateTargetSurfaceVisualGuides()
   rebuildBatwing()
   commitHistoryCheckpoint(previousState)
 })
@@ -5369,14 +6988,14 @@ baseGridToggle.addEventListener('change', () => {
 wireToggle.addEventListener('change', () => {
   const previousState = captureAppState()
   previousState.showWireframe = !wireToggle.checked
-  wireOverlay.visible = wireToggle.checked
+  applyViewportDisplayMode(getCurrentViewportDisplayMode(), false)
   commitHistoryCheckpoint(previousState)
 })
 
 reflectionToggle.addEventListener('change', () => {
   const previousState = captureAppState()
   previousState.reflectionsEnabled = !reflectionToggle.checked
-  applyMaterialStyle(reflectionToggle.checked ? FOIL_MATERIAL_STYLE : MATTE_MATERIAL_STYLE)
+  applyViewportDisplayMode(reflectionToggle.checked ? 'gloss' : 'solid')
   commitHistoryCheckpoint(previousState)
 })
 
@@ -5390,8 +7009,23 @@ backFacesToggle.addEventListener('change', () => {
 seamDebugToggle.addEventListener('change', () => {
   const previousState = captureAppState()
   previousState.showSeamDebug = !seamDebugToggle.checked
-  seamDebugPoints.visible = seamDebugToggle.checked
+  applyViewportDisplayMode(getCurrentViewportDisplayMode(), false)
   commitHistoryCheckpoint(previousState)
+})
+
+viewportModeSelect.addEventListener('pointerdown', () => {
+  viewportDisplayModeBeforeEdit = getCurrentViewportDisplayMode()
+})
+viewportModeSelect.addEventListener('focus', () => {
+  viewportDisplayModeBeforeEdit = getCurrentViewportDisplayMode()
+})
+viewportModeSelect.addEventListener('change', () => {
+  const previousMode = viewportDisplayModeBeforeEdit ?? DEFAULT_VIEWPORT_DISPLAY_MODE
+  const previousState = captureAppState()
+  previousState.viewportDisplayMode = previousMode
+  applyViewportDisplayMode(getCurrentViewportDisplayMode())
+  commitHistoryCheckpoint(previousState)
+  viewportDisplayModeBeforeEdit = null
 })
 
 foilColorInput.addEventListener('input', () => {
@@ -5424,9 +7058,15 @@ latticeControlsToggle.addEventListener('change', () => {
   commitHistoryCheckpoint(previousState)
 })
 
-exportObjButton.addEventListener('click', exportObj)
-exportGlbButton.addEventListener('click', exportGlb)
-exportScreenshotButton.addEventListener('click', exportScreenshot)
+exportObjButton.addEventListener('click', () => {
+  runWithButtonLoading(exportObjButton, exportObj)
+})
+exportGlbButton.addEventListener('click', () => {
+  runWithButtonLoading(exportGlbButton, exportGlb)
+})
+exportScreenshotButton.addEventListener('click', () => {
+  runWithButtonLoading(exportScreenshotButton, exportScreenshot)
+})
 
 collapseToggle.addEventListener('pointerdown', (event) => {
   event.stopPropagation()
@@ -5444,6 +7084,7 @@ uiHandleTop.addEventListener('pointerdown', (event) => {
 
   const rect = uiPanel.getBoundingClientRect()
   panelDragging = true
+  uiPanel.classList.add('is-dragging')
   panelDragOffset.x = event.clientX - rect.left
   panelDragOffset.y = event.clientY - rect.top
   uiHandleTop.setPointerCapture(event.pointerId)
@@ -5464,11 +7105,13 @@ uiHandleTop.addEventListener('pointermove', (event) => {
 
 uiHandleTop.addEventListener('pointerup', (event) => {
   panelDragging = false
+  uiPanel.classList.remove('is-dragging')
   uiHandleTop.releasePointerCapture(event.pointerId)
 })
 
 uiHandleTop.addEventListener('pointercancel', (event) => {
   panelDragging = false
+  uiPanel.classList.remove('is-dragging')
   uiHandleTop.releasePointerCapture(event.pointerId)
 })
 
@@ -5483,7 +7126,10 @@ uiPanel.addEventListener(
 )
 
 updatePanelSectionControls()
+updatePanelTabs()
+enableContextualStatusHints()
 enablePerSectionScrolling()
+updateTargetTransformButtonAvailability()
 updateGeometryDataset()
 onResize()
 window.addEventListener('resize', onResize)
